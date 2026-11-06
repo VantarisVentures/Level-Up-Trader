@@ -92,7 +92,16 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 .stats>div{display:flex;flex-direction:column}
 .stats dt{color:var(--muted);font-size:12.5px}
 .stats dd{margin:0;font-weight:600}
-#statspanel{min-width:min(92vw,330px)}
+#statspanel{min-width:min(92vw,400px);max-width:min(92vw,440px)}
+#statspanel .stats>.bsec{grid-column:1/-1;border-bottom:0;margin-top:6px}
+.bsec h4{margin:4px 0 6px}
+.badges{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.badge{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:6px 8px;opacity:.5;filter:grayscale(1)}
+.badge.got{opacity:1;filter:none;border-color:var(--accent)}
+.badge i{font-style:normal;font-size:22px;line-height:1;flex:none}
+.badge b{font-size:13px;display:block;font-weight:600}
+.badge small{color:var(--muted);font-size:11px;line-height:1.25;display:block}
+@media (max-width:700px){.badges{grid-template-columns:1fr}}
 #statspanel .stats{grid-template-columns:repeat(2,1fr)}
 #statspanel .stats>div{padding:3px 0;border-bottom:1px solid var(--grid)}
 .stats>.key{grid-column:1/-1;display:flex;flex-direction:row;flex-wrap:wrap;gap:4px 16px;color:var(--muted);font-size:13px}
@@ -393,7 +402,7 @@ html,body{overflow:hidden}
       </div>
     </div>
     <div class="menuwrap">
-      <button id="statsbtn" class="menubtn" aria-expanded="false" aria-controls="statspanel" type="button">Stats</button>
+      <button id="statsbtn" class="menubtn" aria-expanded="false" aria-controls="statspanel" type="button">🏅 Stats</button>
       <div id="statspanel" class="menupanel right" hidden>
         <dl class="stats" id="stats"></dl>
       </div>
@@ -1141,9 +1150,10 @@ const G = {
   lvl: 1, maxLvl: 1, mode: 'levels', cleared: 0, fails: 0, coins: 0, owned: ['classic'], skin: 'classic',
   inv: { dd: 1, shield: 1, guard: 1, slow: 1, ball: 1, chance: 1, warp: 1 }, armed: { dd: false, shield: false, guard: false },
   streak: 0, best: 0, wins: 0, losses: 0, trades: 0, net: 0, lastLoss: null, q: null,
-  ps: { wins: 0, losses: 0, winAmt: 0, lossAmt: 0, winDur: 0, lossDur: 0, bestWin: 0, worstLoss: 0 }
+  ps: { wins: 0, losses: 0, winAmt: 0, lossAmt: 0, winDur: 0, lossDur: 0, bestWin: 0, worstLoss: 0, powers: 0, bracket: 0 },
+  ach: {}, daily: { last: '', n: 0, best: 0 }, bought: 0, lastFail: 0
 };
-const PS0 = () => ({ wins: 0, losses: 0, winAmt: 0, lossAmt: 0, winDur: 0, lossDur: 0, bestWin: 0, worstLoss: 0 });
+const PS0 = () => ({ wins: 0, losses: 0, winAmt: 0, lossAmt: 0, winDur: 0, lossDur: 0, bestWin: 0, worstLoss: 0, powers: 0, bracket: 0 });
 const LV = { n: 1, target: 500, limit: 250, pnl: 0, scen: scenFor(1), active: false };
 const GM = { locked: false };
 const FX = { slowUntil: 0, ballUntil: 0, now: 0 };
@@ -1185,6 +1195,50 @@ function award(why, quiet) {
   return pick;
 }
 
+/* ---- badges: collect them all ---- */
+const netAll = () => G.ps.winAmt - G.ps.lossAmt, tradesAll = () => G.ps.wins + G.ps.losses;
+const BADGES = [
+  { id: 'first',    ic: '🩸', n: 'First Blood',    d: 'Win your first trade',                    c: 20,  t: () => G.ps.wins >= 1 },
+  { id: 'lvl1',     ic: '🚩', n: 'Level Cleared',  d: 'Clear Level 1',                           c: 25,  t: () => G.cleared >= 1 },
+  { id: 'lvl5',     ic: '⭐', n: 'Rising Star',    d: 'Reach Level 5',                           c: 50,  t: () => G.maxLvl >= 5 },
+  { id: 'lvl10',    ic: '👑', n: 'Market Master',  d: 'Reach Level 10',                          c: 150, t: () => G.maxLvl >= 10 },
+  { id: 'comeback', ic: '💪', n: 'Comeback Kid',   d: 'Clear a level right after failing it',    c: 40 },
+  { id: 'hat',      ic: '🎩', n: 'Hat Trick',      d: 'Win 3 trades in a row',                   c: 25,  t: () => G.best >= 3 },
+  { id: 'fire',     ic: '🔥', n: 'On Fire',        d: 'Win 5 trades in a row',                   c: 50,  t: () => G.best >= 5 },
+  { id: 'unstop',   ic: '🚀', n: 'Unstoppable',    d: 'Win 10 trades in a row',                  c: 120, t: () => G.best >= 10 },
+  { id: 'big',      ic: '🐟', n: 'Big Fish',       d: 'Win $500 in one trade',                   c: 40,  t: () => G.ps.bestWin >= 500 },
+  { id: 'whale',    ic: '🐋', n: 'Whale',          d: 'Win $2,000 in one trade',                 c: 120, t: () => G.ps.bestWin >= 2000 },
+  { id: 'sniper',   ic: '🎯', n: 'Sniper',         d: 'Get a trade closed by your profit target', c: 25 },
+  { id: 'disc',     ic: '🛡️', n: 'Disciplined',    d: 'Close 10 trades with a stop or target',   c: 50,  t: () => G.ps.bracket >= 10 },
+  { id: 'quick',    ic: '⏱️', n: 'Quick Draw',     d: 'Win a trade in under 1 minute',           c: 30 },
+  { id: 'patient',  ic: '🧘', n: 'Patience',       d: 'Win a trade you held for 30+ minutes',    c: 30 },
+  { id: 't10',      ic: '📈', n: 'Getting Started', d: 'Close 10 trades',                        c: 20,  t: () => tradesAll() >= 10 },
+  { id: 't100',     ic: '⚙️', n: 'Grinder',        d: 'Close 100 trades',                        c: 75,  t: () => tradesAll() >= 100 },
+  { id: 'p1k',      ic: '💵', n: 'Profit Club',    d: 'Make $1,000 total profit',                c: 60,  t: () => netAll() >= 1000 },
+  { id: 'p10k',     ic: '💰', n: 'Five Figures',   d: 'Make $10,000 total profit',               c: 200, t: () => netAll() >= 10000 },
+  { id: 'quest',    ic: '📋', n: 'Quest Done',     d: 'Complete a daily quest',                  c: 20 },
+  { id: 'perfect',  ic: '✅', n: 'Perfect Day',    d: 'Complete all daily quests in one day',    c: 50 },
+  { id: 'shop',     ic: '🛍️', n: 'Shopper',        d: 'Buy something in the shop',               c: 15,  t: () => G.bought >= 1 },
+  { id: 'skins',    ic: '🎨', n: 'Fashionista',    d: 'Own 3 chart skins',                       c: 50,  t: () => G.owned.length >= 3 },
+  { id: 'power',    ic: '🔋', n: 'Power Player',   d: 'Use 10 powerups',                         c: 40,  t: () => G.ps.powers >= 10 },
+  { id: 'warp',     ic: '⏳', n: 'Time Traveler',  d: 'Use Time Warp',                           c: 25 },
+  { id: 'ball',     ic: '🔮', n: 'Fortune Teller', d: 'Use the Crystal Ball',                    c: 25 },
+  { id: 'd3',       ic: '📅', n: 'Regular',        d: 'Play 3 days in a row',                    c: 50,  t: () => G.daily.best >= 3 },
+  { id: 'd7',       ic: '🗓️', n: 'Dedicated',      d: 'Play 7 days in a row',                    c: 150, t: () => G.daily.best >= 7 }
+];
+function unlock(id) {
+  if (G.ach[id]) return; const b = BADGES.find(x => x.id === id); if (!b) return;
+  G.ach[id] = 1; G.coins += b.c; toast(`🏅 Badge unlocked: ${b.ic} <b>${b.n}</b><br>${b.d} · +${b.c} 🪙`, 'big'); confetti(50);
+}
+function checkBadges() { for (const b of BADGES) if (b.t && !G.ach[b.id] && b.t()) unlock(b.id); }
+function checkDaily() {
+  const t = today(), d = G.daily; if (d.last === t) return;
+  const day = x => { const [y, m, dd] = x.split('-').map(Number); return Date.UTC(y, m - 1, dd) / 86400000; };
+  d.n = d.last && day(t) - day(d.last) === 1 ? d.n + 1 : 1; d.best = Math.max(d.best, d.n); d.last = t;
+  if (d.n > 1) { const c = 10 * Math.min(d.n, 7); G.coins += c; toast(`🔥 ${d.n}-day streak! +${c} 🪙`, 'big'); }
+  checkBadges(); saveG(); renderGame();
+}
+
 /* ---- daily quests (new set each real calendar day) ---- */
 const QPOOL = {
   win:    { goals: [3, 4, 5],    text: n => `Win ${n} trades`,                      on: t => t.raw > 0 ? 1 : 0 },
@@ -1209,7 +1263,7 @@ function ensureQuests() {
 }
 function questText(it) { return QPOOL[it.id].text(it.goal); }
 function questProgress(ev, t) {
-  ensureQuests();
+  ensureQuests(); if (ev === 'power') G.ps.powers++;
   for (const it of G.q.items) {
     if (it.done) continue;
     const q = QPOOL[it.id];
@@ -1221,8 +1275,10 @@ function questProgress(ev, t) {
     if (it.p >= need) {
       it.done = true; if (G.inv[it.rw] < INV_MAX) G.inv[it.rw]++; G.coins += QCOINS;
       toast(`✅ Quest done: ${questText(it)}<br>+${QCOINS} 🪙 and +1 ${POWERS[it.rw].e} ${POWERS[it.rw].name}`, 'big'); confetti(45);
+      unlock('quest'); if (G.q.items.every(i => i.done)) unlock('perfect');
     }
   }
+  checkBadges();
 }
 
 /* ---- settling a finished round-trip trade ---- */
@@ -1259,6 +1315,9 @@ function settleTrade(t) {
   }
   if (notes.length) toast(notes.join(' · '), win ? 'win' : loss ? 'loss' : '');
   questProgress('trade', { raw: t.raw, adj, tag: t.tag, hadStop: t.hadStop });
+  if (t.tag === 'Stop' || t.tag === 'Target') G.ps.bracket++;
+  if (t.raw > 0.005) { if (t.tag === 'Target') unlock('sniper'); if (t.dur > 0 && t.dur < 1) unlock('quick'); if (t.dur >= 30) unlock('patient'); }
+  checkBadges();
   saveG(); renderGame();
   if (lm) { if (LV.pnl >= LV.target) finishLevel(true); else if (LV.pnl <= -LV.limit) finishLevel(false); }
 }
@@ -1278,9 +1337,9 @@ function startLevel(n, intro) {
 }
 function finishLevel(pass) {
   LV.active = false; GM.locked = true; if (!paused) togglePause();
-  if (pass) { G.cleared++; G.lvl = LV.n + 1; G.maxLvl = Math.max(G.maxLvl, G.lvl); LV.reward = award('Level cleared', true); LV.coins = 50 + 25 * LV.n; G.coins += LV.coins; confetti(140); }
-  else { G.fails++; shake(); }
-  saveG(); renderGame(); showOver(pass ? 'pass' : 'fail');
+  if (pass) { if (G.lastFail === LV.n) unlock('comeback'); G.lastFail = 0; G.cleared++; G.lvl = LV.n + 1; G.maxLvl = Math.max(G.maxLvl, G.lvl); LV.reward = award('Level cleared', true); LV.coins = 50 + 25 * LV.n; G.coins += LV.coins; confetti(140); }
+  else { G.fails++; G.lastFail = LV.n; shake(); }
+  checkBadges(); saveG(); renderGame(); showOver(pass ? 'pass' : 'fail');
 }
 function showOver(kind) {
   const o = document.getElementById('lvover'), n2 = LV.n + 1, s2 = scenFor(n2);
@@ -1353,7 +1412,7 @@ function warpClick(e) {
   const b = e.target.closest('button[data-off]'); if (!b) return;
   if (G.inv.warp <= 0) return;
   const off = +b.dataset.off, from = M.off;
-  G.inv.warp--; if (openMenu) openMenu.close();
+  G.inv.warp--; unlock('warp'); if (openMenu) openMenu.close();
   warpSkip(off); questProgress('power');
   const ev = M.d >= 0 ? clk(M.modNow()) : '';
   floatText(`⏳ ${ev}<small>Time Warp</small>`, 'win'); toast(`⏳ Jumped ahead to ${ev}`, 'big'); saveG(); renderGame();
@@ -1371,7 +1430,7 @@ function pressPower(k) {
   } else if (k === 'slow') {
     G.inv.slow--; FX.slowUntil = FX.now + 45000; toast('🐢 Slow-mo on for 45s'); questProgress('power');
   } else if (k === 'ball') {
-    G.inv.ball--; FX.ballUntil = FX.now + 90000; toast('🔮 Crystal Ball on for 90s'); questProgress('power');
+    unlock('ball'); G.inv.ball--; FX.ballUntil = FX.now + 90000; toast('🔮 Crystal Ball on for 90s'); questProgress('power');
   } else if (k === 'warp') { openWarp(); return;
   } else if (k === 'chance') {
     if (!G.lastLoss) { toast('Nothing to undo. Take a loss first 😅'); return; }
@@ -1428,14 +1487,14 @@ function shopClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.act === 'restart') {
     if (G.mode !== 'levels' || !LV.active || G.coins < RESTART_COST) return;
-    G.coins -= RESTART_COST; if (openMenu) openMenu.close(); startLevel(LV.n); toast('🔄 Level restarted on a fresh market'); return;
+    G.coins -= RESTART_COST; G.bought++; checkBadges(); if (openMenu) openMenu.close(); startLevel(LV.n); toast('🔄 Level restarted on a fresh market'); return;
   }
   if (b.dataset.buy) {
     const k = b.dataset.buy; if (G.coins < PRICES[k] || G.inv[k] >= INV_MAX) return;
-    G.coins -= PRICES[k]; G.inv[k]++; toast(`Bought ${POWERS[k].e} ${POWERS[k].name}`, 'win');
+    G.coins -= PRICES[k]; G.inv[k]++; G.bought++; checkBadges(); toast(`Bought ${POWERS[k].e} ${POWERS[k].name}`, 'win');
   } else if (b.dataset.skin) {
     const id = b.dataset.skin, x = SKINS[id];
-    if (!G.owned.includes(id)) { if (G.coins < x.price) return; G.coins -= x.price; G.owned.push(id); toast(`New skin: ${x.name} 🎨`, 'big'); confetti(50); }
+    if (!G.owned.includes(id)) { if (G.coins < x.price) return; G.coins -= x.price; G.owned.push(id); G.bought++; checkBadges(); toast(`New skin: ${x.name} 🎨`, 'big'); confetti(50); }
     G.skin = id; applySkin(id);
   } else return;
   saveG(); renderGame(); renderShop();
@@ -1779,9 +1838,13 @@ function renderStats() {
     ['Biggest win', P.wins ? usd(P.bestWin) : '—'],
     ['Biggest loss', P.losses ? usd(-P.worstLoss) : '—'],
     ['Avg win', P.wins ? usd(P.winAmt / P.wins) : '—'],
-    ['Avg loss', P.losses ? usd(-P.lossAmt / P.losses) : '—']
+    ['Avg loss', P.losses ? usd(-P.lossAmt / P.losses) : '—'],
+    ['Daily streak', G.daily.n ? `🔥 ${G.daily.n} day${G.daily.n === 1 ? '' : 's'}` : '—'],
+    ['Best daily streak', G.daily.best ? G.daily.best + (G.daily.best === 1 ? ' day' : ' days') : '—']
   ];
-  $('#stats').innerHTML = items.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')
+  const got = BADGES.filter(b => G.ach[b.id]).length;
+  const bsec = `<div class="bsec"><h4>Badges ${got}/${BADGES.length}</h4><div class="badges">${BADGES.map(b => `<div class="badge${G.ach[b.id] ? ' got' : ''}" title="${b.d}"><i>${G.ach[b.id] ? b.ic : '🔒'}</i><div><b>${b.n}</b><small>${b.d}</small></div></div>`).join('')}</div></div>`;
+  $('#stats').innerHTML = items.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('') + bsec
     + `<div class="key"><span>Times are market time (how long you held the trade). Stats are saved on this device.</span></div>`;
   renderKey();
 }
@@ -2429,7 +2492,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { re
 if (document.fonts) document.fonts.ready.then(req);
 
 setSkinVars(G.skin); readColors(); buildSettings(); refreshChips(); resize(); if (G.mode === 'levels') startLevel(G.lvl, true); else regenerate();
-renderGame(); if (G.mode === 'levels') { if (!paused) togglePause(); } requestAnimationFrame(loop);
+renderGame(); if (G.mode === 'levels') { if (!paused) togglePause(); } setTimeout(checkDaily, 900); requestAnimationFrame(loop);
 </script>
 </body>
 </html>
