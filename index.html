@@ -1095,7 +1095,9 @@ const AC = { contract: 'MNQ', bal: 50000, realized: 0, qty: 0, avg: 0, stopPx: n
 let ordId = 1;
 let RT = null; // the round trip in progress (flat -> flat), settled by the game layer
 function resetAccount() { RT = null; AC.realized = 0; AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null; AC.trades = []; AC.orders = []; }
-const fillPrice = dir => dir > 0 ? rt(M.p) + TICK : rt(M.p) - TICK;
+// last traded price: exactly what the chart shows as the current price (everything about your trades uses this)
+const LP = () => { const b = M.base[M.base.length - 1]; return b ? b.c : rt(M.p); };
+const fillPrice = dir => dir > 0 ? rt(LP()) + TICK : rt(LP()) - TICK;
 const fmtSigned = v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v)).toLocaleString('en-US');
 function timeStr() { return `${dayShort(M.d)} ${hhmm(M.modNow())}:${String(simSec()).padStart(2, '0')}`; }
 
@@ -1148,7 +1150,7 @@ function closeAll(tag, atPrice) {
 }
 function checkPending() {
   if (!AC.orders.length || GM.locked) return;
-  const p = M.p;
+  const p = LP();
   for (const o of AC.orders.slice()) {
     if (GM.locked) break;
     if ((o.side > 0 && p <= o.px) || (o.side < 0 && p >= o.px)) {
@@ -1160,7 +1162,7 @@ function checkPending() {
 }
 function checkOrders() {
   if (AC.qty === 0 || (AC.stopPx == null && AC.tgtPx == null)) return;
-  const p = M.p;
+  const p = LP();
   if (AC.qty > 0) { if (AC.stopPx != null && p <= AC.stopPx) closeAll('Stop', AC.stopPx); else if (AC.tgtPx != null && p >= AC.tgtPx) closeAll('Target', AC.tgtPx); }
   else { if (AC.stopPx != null && p >= AC.stopPx) closeAll('Stop', AC.stopPx); else if (AC.tgtPx != null && p <= AC.tgtPx) closeAll('Target', AC.tgtPx); }
 }
@@ -1178,7 +1180,7 @@ function buildTradeMap() {
 function renderTrade() {
   if (!M) return;
   const mult = CONTRACTS[AC.contract].mult;
-  const unreal = AC.qty !== 0 ? (M.p - AC.avg) * AC.qty * mult : 0;
+  const unreal = AC.qty !== 0 ? (LP() - AC.avg) * AC.qty * mult : 0;
   const equity = AC.bal + AC.realized + unreal;
   const posEl = $('#posLabel'), unrealEl = $('#posUnreal');
   posEl.textContent = AC.qty === 0 ? 'Flat' : `${AC.qty > 0 ? 'Long' : 'Short'} ${Math.abs(AC.qty)} @ ${fp(AC.avg)}`;
@@ -1410,7 +1412,7 @@ function settleTrade(t) {
 /* ---- levels ---- */
 function checkLimit() { // open losses count toward the limit: blow through it and the position is closed for you
   if (G.mode !== 'levels' || !LV.active || AC.qty === 0 || !M) return;
-  const un = (M.p - AC.avg) * AC.qty * CONTRACTS[AC.contract].mult;
+  const un = (LP() - AC.avg) * AC.qty * CONTRACTS[AC.contract].mult;
   if (LV.pnl + un <= -LV.limit) { toast('🚨 Loss limit reached. Position closed', 'loss'); closeAll('Limit'); }
 }
 function hideOver() { const o = document.getElementById('lvover'); if (o) { o.hidden = true; o.innerHTML = ''; } }
@@ -1894,8 +1896,8 @@ function placeOrder(dir) {
   if (orderType !== 'lmt') { execute(dir, qty); return; }
   if (!M || GM.locked) return;
   if (AC.orders.length >= 4) { toast('Max 4 working orders. Cancel one first'); return; }
-  const dist = Math.max(4, Math.round(M.p * 0.0004));
-  AC.orders.push({ id: ordId++, side: dir, qty, px: dir > 0 ? rt(M.p - dist) : rt(M.p + dist) });
+  const dist = Math.max(4, Math.round(LP() * 0.0004));
+  AC.orders.push({ id: ordId++, side: dir, qty, px: dir > 0 ? rt(LP() - dist) : rt(LP() + dist) });
   toast(`${dir > 0 ? 'Buy' : 'Sell'} limit placed. Drag the line to move it, tap the ✕ to cancel`); renderTrade(); req();
 }
 function flattenAll() { const had = AC.orders.length; AC.orders = []; closeAll('Flatten'); if (had) toast('Working orders cancelled'); renderTrade(); req(); }
@@ -2226,9 +2228,9 @@ function drawMain(p, i0, i1, hj) {
     const cl = v => clamp(v, top + 34, top + h - 16);
     if (AC.tgtPx == null) orderPill('＋ TARGET', C.up, 'add-target', cl(eY - sg * off));
     if (AC.stopPx == null) orderPill('＋ STOP', C.down, 'add-stop', cl(eY + sg * off));
-    else if (sg * (AC.stopPx - AC.avg) < 0 && sg * (M.p - AC.avg) >= 2 * TICK) orderPill('🛡 BREAKEVEN', C.ink, 'be-stop', cl(eY + sg * off));
+    else if (sg * (AC.stopPx - AC.avg) < 0 && sg * (LP() - AC.avg) >= 2 * TICK) orderPill('🛡 BREAKEVEN', C.ink, 'be-stop', cl(eY + sg * off));
   }
-  for (const o of AC.orders) drawOrderLine(y, o.px, o.side > 0 ? C.up : C.down, [9, 4], `${o.side > 0 ? 'BUY' : 'SELL'} LIMIT ×${o.qty} · ${ptsTxt(o.px - M.p)} pts away`, lineDrag === 'ord:' + o.id, undefined, 'ord:' + o.id);
+  for (const o of AC.orders) drawOrderLine(y, o.px, o.side > 0 ? C.up : C.down, [9, 4], `${o.side > 0 ? 'BUY' : 'SELL'} LIMIT ×${o.qty} · ${ptsTxt(o.px - LP())} pts away`, lineDrag === 'ord:' + o.id, undefined, 'ord:' + o.id);
   if (D.trMap && st.ov.fills) {
     for (let i = i0; i <= i1; i++) {
       const trs = D.trMap.get(i); if (!trs) continue;
@@ -2525,10 +2527,10 @@ function orderBtnDown(b) {
   if (b.k.startsWith('clear-ord:')) { const id = +b.k.slice(10); AC.orders = AC.orders.filter(o => o.id !== id); renderTrade(); req(); return; }
   const sg = Math.sign(AC.qty), dist = Math.max(4, Math.round(AC.avg * 0.0004));
   if (b.k === 'add-stop') {
-    AC.stopPx = sg > 0 ? Math.min(rt(AC.avg - dist), rt(M.p - 4 * TICK)) : Math.max(rt(AC.avg + dist), rt(M.p + 4 * TICK));
+    AC.stopPx = sg > 0 ? Math.min(rt(AC.avg - dist), rt(LP() - 4 * TICK)) : Math.max(rt(AC.avg + dist), rt(LP() + 4 * TICK));
     $('#stopPts').value = Math.abs(rt(AC.avg - AC.stopPx)); lineDrag = 'stop';
   } else if (b.k === 'add-target') {
-    AC.tgtPx = sg > 0 ? Math.max(rt(AC.avg + 2 * dist), rt(M.p + 4 * TICK)) : Math.min(rt(AC.avg - 2 * dist), rt(M.p - 4 * TICK));
+    AC.tgtPx = sg > 0 ? Math.max(rt(AC.avg + 2 * dist), rt(LP() + 4 * TICK)) : Math.min(rt(AC.avg - 2 * dist), rt(LP() - 4 * TICK));
     $('#tgtPts').value = Math.abs(rt(AC.avg - AC.tgtPx)); lineDrag = 'target';
   } else if (b.k === 'be-stop') {
     AC.stopPx = rt(AC.avg); $('#stopPts').value = 0; toast('Stop moved to breakeven 🛡️');
@@ -2563,13 +2565,13 @@ cv.addEventListener('pointermove', e => {
   if (drawDrag) { drawMove(e); return; }
   if (lineDrag && lineDrag.startsWith('ord:')) {
     const o = AC.orders.find(x => x.id === +lineDrag.slice(4)), price = rt(mainInv(e.offsetY));
-    if (o) o.px = o.side > 0 ? Math.min(price, rt(M.p - TICK)) : Math.max(price, rt(M.p + TICK));
+    if (o) o.px = o.side > 0 ? Math.min(price, rt(LP() - TICK)) : Math.max(price, rt(LP() + TICK));
     req(); return;
   }
   if (lineDrag) {
     const dir = Math.sign(AC.qty), price = rt(mainInv(e.offsetY));
-    if (lineDrag === 'stop') AC.stopPx = dir > 0 ? Math.min(price, rt(M.p - TICK)) : Math.max(price, rt(M.p + TICK));
-    else AC.tgtPx = dir > 0 ? Math.max(price, rt(M.p + TICK)) : Math.min(price, rt(M.p - TICK));
+    if (lineDrag === 'stop') AC.stopPx = dir > 0 ? Math.min(price, rt(LP() - TICK)) : Math.max(price, rt(LP() + TICK));
+    else AC.tgtPx = dir > 0 ? Math.max(price, rt(LP() + TICK)) : Math.min(price, rt(LP() - TICK));
     $(lineDrag === 'stop' ? '#stopPts' : '#tgtPts').value = Math.abs(rt(AC.avg - (lineDrag === 'stop' ? AC.stopPx : AC.tgtPx)));
     renderTrade(); req(); return;
   }
