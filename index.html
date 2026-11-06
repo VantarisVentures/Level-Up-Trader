@@ -160,9 +160,31 @@ table.tlog td.num{text-align:right;font-variant-numeric:tabular-nums}
 @media (max-width:700px){ .posbox{align-items:flex-start} }
 
 /* ---- fit-to-screen layout: header / tradebar / control strip / chart, no page scroll ---- */
-html,body{overflow:hidden}
-.app{overflow:hidden}
-.chartWrap{min-height:0}
+html,body{overflow-x:hidden;overflow-y:auto}
+.app{height:auto;min-height:100%;overflow:visible}
+.chartWrap{min-height:320px}
+.actionbar{position:sticky;bottom:0;z-index:20;background:var(--bg);padding-top:4px;padding-bottom:calc(4px + env(safe-area-inset-bottom,0px))}
+#lockbtn::after{display:none}
+#lockbtn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.gl .sm{display:none}
+@media (max-width:1000px),(max-height:720px){
+  .brand{display:none}
+  .menubtn{padding:0 8px;font-size:13px;gap:4px;height:32px}
+  .controlstrip{gap:6px}
+  .gamebar{gap:4px 8px}
+}
+@media (max-height:720px){
+  .app{gap:5px;padding:6px 10px}
+  .actionbar button{height:42px;font-size:16px}
+  .pnlbig{font-size:30px}
+  .chartWrap{min-height:280px}
+}
+@media (max-width:380px){
+  .pw{width:22px}
+  .gamebar .menubtn{padding:0 4px}
+  .bar .menubtn{padding:0 6px;font-size:12.5px}
+  .hpnl-big{font-size:22px}
+}
 .controlstrip{align-items:center}
 #tfSel{min-width:76px;font-weight:600}
 .menuwrap{position:relative}
@@ -320,7 +342,22 @@ html,body{overflow:hidden}
   .tradebar .pnlbox{order:2;margin-left:auto;align-items:flex-end}
   .tradebar>:nth-child(4){order:3}
   .tradebar>.menuwrap{order:4;margin-left:auto}
-  .actionbar button{height:46px}
+  .actionbar button{height:44px}
+  .controlstrip{flex-wrap:nowrap;overflow-x:auto;gap:6px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .controlstrip::-webkit-scrollbar{display:none}
+  .controlstrip>*{flex:none}
+  .tradebar{gap:4px 8px;padding:5px 8px}
+  .tradebar .pnlsub{display:none}
+  .tradebar .pnlbig{font-size:24px}
+  .tradebar .pnllabel{font-size:12px;margin:0}
+  .tradebar .pt{width:48px}
+  .tradebar .gl .lg{display:none}
+  .tradebar .gl .sm{display:inline}
+  .tradebar>:nth-child(4){order:3;gap:3px}
+  .bar{gap:4px 8px}
+  .seg button{height:28px}
+  .icon{height:30px}
+  #speeds button{padding:3px 8px}
 }
 </style>
 </head>
@@ -389,6 +426,7 @@ html,body{overflow:hidden}
       <button data-s="eth" aria-pressed="true" title="Full Globex session, 6pm to 5pm ET">ETH</button>
       <button data-s="rth" aria-pressed="false" title="Regular hours only, 9:30am to 4pm ET">RTH</button>
     </div>
+    <button id="lockbtn" class="menubtn" type="button" aria-pressed="false" title="Lock the chart: it stays exactly where you drag it (no auto-follow, no auto-zoom). Shortcut: L">🔓 Lock chart</button>
     <div class="menuwrap">
       <button id="indbtn" class="menubtn" aria-expanded="false" aria-controls="indpanel" type="button">Indicators</button>
       <div id="indpanel" class="menupanel" hidden>
@@ -458,8 +496,8 @@ html,body{overflow:hidden}
       <div class="seg" id="otype" role="group" aria-label="Order type"><button type="button" data-t="mkt" aria-pressed="true"><span class="lg">Market</span><span class="sm">Mkt</span></button><button type="button" data-t="lmt" aria-pressed="false"><span class="lg">Limit</span><span class="sm">Lmt</span></button></div>
     </div>
     <div class="group">
-      <span class="gl">Stop pts</span><input id="stopPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
-      <span class="gl">Target pts</span><input id="tgtPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
+      <span class="gl"><span class="lg">Stop pts</span><span class="sm">SL</span></span><input id="stopPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
+      <span class="gl"><span class="lg">Target pts</span><span class="sm">TP</span></span><input id="tgtPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
     </div>
     <div class="spacer"></div>
     <div class="pnlbox">
@@ -470,6 +508,7 @@ html,body{overflow:hidden}
     <div class="menuwrap">
       <button id="logbtn" class="menubtn" aria-expanded="false" aria-controls="logpanel" type="button">Log</button>
       <div id="logpanel" class="menupanel right" hidden>
+        <div class="foot" id="acctEqLog" style="margin:0 0 4px;font-weight:600"></div>
         <div class="foot" style="margin:0 0 8px">Simulated fills, 1-tick slippage. Practice money only, not real trading advice.</div>
         <div id="tradelog"></div>
       </div>
@@ -1189,7 +1228,7 @@ function renderTrade() {
   unrealEl.className = 'pnlbig ' + (AC.qty === 0 ? 'pos-flat' : unreal >= 0 ? 'pos-long' : 'pos-short');
   $('#hdrRealized').textContent = fmtSigned(AC.realized);
   $('#hdrRealized').className = 'hpnl-big ' + (AC.realized === 0 ? 'pos-flat' : AC.realized > 0 ? 'pos-long' : 'pos-short');
-  $('#acctEq').textContent = `Equity $${Math.round(equity).toLocaleString('en-US')}`;
+  $('#acctEq').textContent = `Equity $${Math.round(equity).toLocaleString('en-US')}`; $('#acctEqLog').textContent = $('#acctEq').textContent;
   $('#flatBtn').disabled = AC.qty === 0 && !AC.orders.length;
   $('#contract').disabled = AC.qty !== 0;
 }
@@ -1699,7 +1738,15 @@ const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const TFS = [[1, '1m'], [2, '2m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [240, '4h'], [1440, '1D']];
 const SPEEDS = [1, 5, 30, 120, 600];
-const view = { sp: 7, end: 0 };
+const view = { sp: 7, end: 0, fix: null };
+let chartLock = false; try { chartLock = localStorage.getItem('nqsim.lock1') === '1'; } catch (e) {}
+function setLock(on, quiet) {
+  chartLock = !!on; view.fix = null;
+  const b = $('#lockbtn'); b.setAttribute('aria-pressed', chartLock); b.textContent = chartLock ? '🔒 Locked' : '🔓 Lock chart';
+  try { localStorage.setItem('nqsim.lock1', chartLock ? '1' : '0'); } catch (e) {}
+  if (!quiet) toast(chartLock ? '🔒 Locked. Drag the chart any direction and it stays put. Drag the price axis to stretch it.' : '🔓 Unlocked. The chart follows the live price again.');
+  req();
+}
 let hover = null, C = {}, rafId = 0, W = 0, H = 0, DPR = 1;
 let speed = 1, paused = false;
 
@@ -2006,7 +2053,7 @@ function clampView() {
 function toLatest() {
   if (!D) return; const n = D.S.length;
   if (n * view.sp < PW() * 0.5) view.sp = clamp(PW() * 0.9 / n, SPMIN, SPMAX);
-  view.end = n - 1 + Math.max(3, (PW() / view.sp) * 0.1); clampView();
+  view.end = n - 1 + Math.max(3, (PW() / view.sp) * 0.1); view.fix = null; clampView();
 }
 function req() { if (!rafId) rafId = requestAnimationFrame(draw); }
 
@@ -2158,7 +2205,13 @@ function drawMain(p, i0, i1, hj) {
   if (AC.qty !== 0 && !lineDrag) for (const v of [AC.avg, AC.stopPx, AC.tgtPx]) if (v != null && v === v) { if (v < lo) lo = v; if (v > hi) hi = v; }
   if (!isFinite(lo)) { lo = 0; hi = 1; }
   const span = Math.max(hi - lo, 1), ribbon = st.key.regimes ? 10 : 0;
+  const dLo = lo, dHi = hi;
   lo -= span * 0.06; hi += span * 0.14;
+  if (chartLock) {
+    if (view.fix && (dHi < view.fix.lo || dLo > view.fix.hi)) view.fix = null; // price left the screen entirely: re-center
+    if (!view.fix) view.fix = { lo, hi };
+    lo = view.fix.lo; hi = view.fix.hi;
+  } else view.fix = null;
   const top = p.t + 4, h = p.h - 8 - ribbon;
   const y = v => top + (hi - v) / (hi - lo) * h;
   p.y = y; p.inv = py => hi - (py - top) / h * (hi - lo); p.last = S[S.length - 1];
@@ -2558,7 +2611,7 @@ cv.addEventListener('pointerdown', e => {
     if (drawDown(e)) return;
   }
   ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
-  if (ptrs.size === 1) drag = { x: e.offsetX, end: view.end, moved: false, type: e.pointerType };
+  if (ptrs.size === 1) drag = { x: e.offsetX, y: e.offsetY, end: view.end, moved: false, type: e.pointerType, fix: view.fix ? { lo: view.fix.lo, hi: view.fix.hi } : null, axis: chartLock && !!mainYOf && e.offsetX > PW() && e.offsetY >= mainTop && e.offsetY <= mainTop + mainH };
   else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, sp: view.sp, mid: (a.x + b.x) / 2, idx: idxAt((a.x + b.x) / 2) }; drag = null; }
 });
 cv.addEventListener('pointermove', e => {
@@ -2582,8 +2635,13 @@ cv.addEventListener('pointermove', e => {
     view.end = pinch.idx + (PW() - pinch.mid) / view.sp - 0.5; clampView(); req(); return;
   }
   if (drag) {
-    const dx = e.offsetX - drag.x; if (Math.abs(dx) > 3) drag.moved = true;
+    const dx = e.offsetX - drag.x, dy = e.offsetY - drag.y; if (Math.abs(dx) > 3) drag.moved = true;
+    if (drag.axis && drag.fix) { // drag the price axis: stretch / squeeze the price scale
+      const f = Math.exp(dy * 0.006), c = (drag.fix.hi + drag.fix.lo) / 2, half = (drag.fix.hi - drag.fix.lo) / 2 * f;
+      view.fix = { lo: c - half, hi: c + half }; drag.moved = true; req(); return;
+    }
     view.end = drag.end - dx / view.sp; clampView();
+    if (chartLock && drag.fix && mainH > 0) { const dp = dy / mainH * (drag.fix.hi - drag.fix.lo); view.fix = { lo: drag.fix.lo + dp, hi: drag.fix.hi + dp }; if (Math.abs(dy) > 3) drag.moved = true; }
     if (drag.type === 'mouse') hover = { x: e.offsetX, y: e.offsetY };
     req(); return;
   }
@@ -2615,6 +2673,7 @@ cv.addEventListener('keydown', e => {
   if (e.key === 'b' || e.key === 'B') { placeOrder(1); e.preventDefault(); return; }
   if (e.key === 's' || e.key === 'S') { placeOrder(-1); e.preventDefault(); return; }
   if (e.key === 'f' || e.key === 'F') { flattenAll(); e.preventDefault(); return; }
+  if (e.key === 'l' || e.key === 'L') { setLock(!chartLock); e.preventDefault(); return; }
   const vis = PW() / view.sp, zoom = f => { const idx = idxAt(PW() / 2); view.sp = clamp(view.sp * f, SPMIN, SPMAX); view.end = idx + (PW() / 2) / view.sp - 0.5; };
   if (e.key === 'ArrowLeft') view.end -= vis * 0.1;
   else if (e.key === 'ArrowRight') view.end += vis * 0.1;
@@ -2630,7 +2689,7 @@ cv.addEventListener('keydown', e => {
 /* ---------- the live loop ---------- */
 let lastT = 0, acc = 0, lastSync = 0, pending = false, lastStatsT = 0, clockTxt = '';
 function sync(t) {
-  const follow = following(), margin = D ? view.end - (D.S.length - 1) : 3;
+  const follow = !chartLock && following(), margin = D ? view.end - (D.S.length - 1) : 3;
   const a = follow ? null : anchorBase();
   const rebuilt = !D || D.trimmed !== M.trimmed;
   syncSeries(); computeInd();
@@ -2671,6 +2730,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { re
 if (document.fonts) document.fonts.ready.then(req);
 
 setSkinVars(G.skin); readColors(); buildSettings(); refreshChips(); resize(); if (G.mode === 'levels') startLevel(G.lvl, true); else regenerate();
+$('#lockbtn').onclick = () => setLock(!chartLock); setLock(chartLock, true);
 renderGame(); if (G.mode === 'levels') { if (!paused) togglePause(); } setTimeout(checkDaily, 900); requestAnimationFrame(loop);
 </script>
 </body>
