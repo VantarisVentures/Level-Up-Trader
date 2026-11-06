@@ -411,7 +411,7 @@ html,body{overflow:hidden}
   <section class="row tradebar" id="tradebar">
     <div class="group">
       <span class="gl hm">Contract</span>
-      <select id="contract"><option value="NQ">EQ ($20/pt)</option><option value="MNQ" selected>MEQ ($2/pt)</option></select>
+      <select id="contract"><option value="MNQ" selected>TEQ ($2/pt)</option><option value="NQ">EQ ($20/pt)</option></select>
     </div>
     <div class="group">
       <span class="gl hm">Qty</span>
@@ -1288,7 +1288,7 @@ function showOver(kind) {
   let h;
   if (kind === 'intro') {
     h = `<div class="lo-card"><div class="lo-big">Level ${LV.n}</div><div class="lo-sub">Figure out what kind of day this is, then trade it.</div>
-      <div class="lo-next">${rule(LV.n)}<br>Make the target before you lose half of it.<br><span class="lo-sub">Tip: EQ pays $20 a point, MEQ $2 a point. Change the contract below the chart.</span></div>
+      <div class="lo-next">${rule(LV.n)}<br>Make the target before you lose half of it.<br><span class="lo-sub">Tip: EQ pays $20 a point, TEQ $2 a point. Change the contract below the chart.</span></div>
       <div class="lo-btns"><button id="loGo" class="primary lo-btn" type="button">Go</button></div></div>`;
   } else if (kind === 'pass') {
     h = `<div class="lo-card"><div class="lo-big">🏆 Level ${LV.n} cleared!</div><div class="lo-sub">${money(LV.pnl)} profit on a ${money(LV.target)} target</div>
