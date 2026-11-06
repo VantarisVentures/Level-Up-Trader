@@ -629,7 +629,7 @@ const DAY_DEF = {
 };
 const RG_CODES = ['trendUp', 'trendDown', 'range', 'chop', 'breakout', 'fakeout', 'vrev'];
 const RG_LABEL = { trendUp: 'Trend up', trendDown: 'Trend down', range: 'Range', chop: 'Chop', breakout: 'Breakout', fakeout: 'Failed breakout', vrev: 'Flush and V reversal' };
-const EV_LABEL = { PB: 'Trend pullback', R: 'Range edge test', BO: 'Breakout', FB: 'Failed breakout reversal', N: 'News spike', VR: 'V reversal' };
+const EV_LABEL = { PB: 'Trend pullback', R: 'Range edge test', BO: 'Breakout', FB: 'Failed breakout reversal', N: 'News spike', VR: 'V reversal', LV: 'Key-level rejection', VW: 'VWAP bounce', SW: 'Liquidity sweep reversal', GF: 'Gap fill' };
 const volWord = x => x < 0.75 ? 'calm' : x < 1.15 ? 'normal' : x < 1.6 ? 'elevated' : 'storm';
 
 /* =====================================================================
@@ -689,6 +689,7 @@ class Market {
     const ms = R.pick({ bull: 0.5, sideways: 0.3, bear: 0.2 });
     this.macro = { state: ms, left: R.int(...MACRO[ms].dur) };
     this.s = { rg: null, left: 0 }; this.lastEdge = -1e9; this.curRange = null;
+    this.vw = { pv: 0, vv: 0, m: NaN }; this.lv = null; this.lvCool = {}; this.lvSide = {}; this.lvGlobal = -1e9; this.gf = null;
     this.beginDay(true);
   }
   nextIdx() { return this.trimmed + this.base.length; }
@@ -716,6 +717,7 @@ class Market {
       rthH: -Infinity, rthL: Infinity, rthC: NaN, onH: -Infinity, onL: Infinity, ethH: -Infinity, ethL: Infinity, rthV: 0 };
     if (type === 'reversal') { day.dir = R.u() < 0.5 ? 1 : -1; day.flipMod = R.int(660, 840); }
     this.days[this.d] = day;
+    this.vw = { pv: 0, vv: 0, m: NaN }; this.lv = null; this.lvCool = {}; this.lvSide = {}; this.gf = null;
     if (type === 'crash' || type === 'squeeze') this.planCrash(type === 'crash' ? -1 : 1);
     while (this.calDay < this.d + 8) this.cal.push(...genDayEvents(this.seedStr, ++this.calDay));
     this.cal = this.cal.filter(e => e.d >= this.d - 1);
@@ -840,6 +842,61 @@ class Market {
     this.enter(R.pick(w));
   }
 
+  // Teachable market structure: price reacts to VWAP and the key levels (PDH/PDL/PDC/ONH/ONL) in ways real traders can learn.
+  // Each touch rolls one outcome: bounce (the textbook trade), sweep (stop run through the level, then snap back) or break.
+  // Trend days make level holds with the trend more likely. Returns { f, rv, vf } while something is active, else null.
+  keyLevels(day) {
+    const prev = this.days[this.d - 1], out = [];
+    if (prev && isFinite(prev.rthH)) out.push(['PDH', prev.rthH, 'LV'], ['PDL', prev.rthL, 'LV'], ['PDC', prev.rthC, 'LV']);
+    if (isFinite(day.onH)) out.push(['ONH', day.onH, 'LV'], ['ONL', day.onL, 'LV']);
+    if (isFinite(this.vw.m)) out.push(['VWAP', this.vw.m, 'VW']);
+    return out;
+  }
+  lvStep(sg, mod, day) {
+    const R = this.R, p = this.p;
+    if ((this.cr && this.cr.go) || this.shock || !isRTH(mod)) { this.lv = null; return null; }
+    let a = this.lv;
+    if (a) {
+      if (--a.left <= 0) {
+        if (a.kind === 'poke') { a.kind = 'reject'; a.dir = -a.dir; a.left = R.int(10, 20); a.mag = R.range(0.55, 0.8); this.v = Math.max(this.v, 1.6); this.events.push({ i: this.nextIdx(), type: 'SW', dir: a.dir }); }
+        else { this.lv = null; a = null; }
+      }
+      if (a) { const k = a.kind === 'poke' ? 1 : 0.55 + 0.45 * Math.min(1, a.left / 8); return { f: a.dir * a.mag * k, rv: a.kind === 'bounce' || a.kind === 'break' ? 1 : 1.25, vf: a.kind === 'reject' || a.kind === 'poke' ? 1.7 : 1.15 }; }
+    }
+    if (this.minutes - this.lvGlobal < 10) return null;
+    const dd = clamp(this.dayDir(mod) * day.str, -1, 1), inRange = this.s.rg === 'range' || this.s.rg === 'chop';
+    for (const [name, L, tp] of this.keyLevels(day)) {
+      const d = p - L, vwap = name === 'VWAP', zone = sg * (vwap ? 1.6 : 2.6);
+      if (Math.abs(d) > zone * 2) { this.lvSide[name] = Math.sign(d); continue; }
+      const side = this.lvSide[name];
+      if (!side || Math.abs(d) >= zone || this.minutes - (this.lvCool[name] || -1e9) < (vwap ? 30 : 45)) continue;
+      this.lvCool[name] = this.minutes; this.lvSide[name] = 0;
+      if (R.u() > (vwap ? 0.7 : 0.9)) continue; // not every touch matters
+      this.lvGlobal = this.minutes;
+      const al = side * dd + (inRange ? 0.35 : 0); // holds are likelier when the level sits on the trend's side
+      const pB = vwap ? clamp(0.56 + 0.16 * al, 0.3, 0.8) : clamp(0.46 + 0.14 * al, 0.25, 0.7), pS = vwap ? 0 : 0.25, u = R.u();
+      if (u < pB) { this.lv = { kind: 'bounce', dir: side, left: R.int(10, 22), mag: R.range(0.34, 0.6), name }; this.events.push({ i: this.nextIdx(), type: tp, dir: side }); }
+      else if (u < pB + pS) { this.lv = { kind: 'poke', dir: -side, left: R.int(2, 5), mag: R.range(0.55, 0.9), name }; this.v = Math.max(this.v, 1.3); }
+      else this.lv = { kind: 'break', dir: -side, left: R.int(8, 16), mag: R.range(0.25, 0.45), name };
+      return { f: this.lv.dir * this.lv.mag, rv: 1, vf: 1.1 };
+    }
+    return null;
+  }
+  gapStep(sg, mod) { // a gap at the open tends to pull back toward the prior close (about two times in three), but not always
+    const g = this.gf, R = this.R;
+    if (mod === RTH0 && !g) {
+      const prev = this.days[this.d - 1];
+      if (prev && isFinite(prev.rthC)) {
+        const gap = this.p - prev.rthC, gs = Math.abs(gap) / sg;
+        if (gs >= 2 && R.u() < clamp(0.95 - 0.03 * gs, 0.55, 0.85)) { this.gf = { tgt: prev.rthC, dir: -Math.sign(gap), left: 200 }; this.events.push({ i: this.nextIdx(), type: 'GF', dir: this.gf.dir }); }
+      }
+      return 0;
+    }
+    if (!g) return 0;
+    if (--g.left <= 0 || (this.p - g.tgt) * g.dir >= 0 || !isRTH(mod)) { this.gf = null; return 0; }
+    return g.dir * clamp(Math.abs(g.tgt - this.p) / (sg * 22), 0.04, 0.2);
+  }
+
   openMinute() {
     const R = this.R, s = this.s, mod = this.modNow(), day = this.days[this.d];
 
@@ -878,15 +935,18 @@ class Market {
     s.left--;
     if (s.rg === 'trendUp' || s.rg === 'trendDown') {
       // a pullback aimed at a real EMA level ends the moment price gets there, not on a timer
-      if (s.leg === 'pull' && s.pullTarget != null && Math.abs(this.p - s.pullTarget) < this.p * 0.0005) s.legLeft = Math.min(s.legLeft, 1);
+      if (s.leg === 'pull' && s.pullTarget != null && Math.abs(this.p - s.pullTarget) < this.p * 0.0005) {
+        if (!s.pullTested && R.u() < 0.25) { s.pullTested = true; s.pullTarget = null; s.legDrift = -s.dir * 0.22; s.legLeft = R.int(4, 10); } // the average doesn't always hold: price slices through it
+        else s.legLeft = Math.min(s.legLeft, 1);
+      }
       if (--s.legLeft <= 0) {
         if (s.leg === 'impulse') {
-          s.leg = 'pull'; s.legLeft = R.int(10, 26);
+          s.leg = 'pull'; s.pullTested = false; s.legLeft = R.int(10, 26);
           const emaG = R.u() < 0.7 ? this.emaFast : this.emaSlow;
           const validTarget = s.dir > 0 ? emaG < this.p : emaG > this.p; // ema has to sit on the retracement side to make sense as a target
-          s.pullTarget = (validTarget && R.u() < 0.75) ? emaG : null;
+          s.pullTarget = (validTarget && R.u() < 0.68) ? emaG : null;
           s.legDrift = -s.dir * 0.24 * Math.exp(0.3 * clamp(R.n(), -1.8, 1.8)) * (s.strong ? 0.85 : 1); // used only when pullTarget is null
-        } else if (R.u() < 0.12) {
+        } else if (R.u() < 0.16) {
           s.left = 0; // the pullback turns into the end of the trend
         } else {
           s.leg = 'impulse'; s.legLeft = R.int(6, 28); s.legDrift = s.dir * 0.24 * s.k * Math.exp(0.35 * clamp(R.n(), -1.8, 1.8));
@@ -928,7 +988,13 @@ class Market {
         break;
     }
     const cs = this.crStep(sigBase0); if (cs) { code = cs.code; rv = cs.rv; vf = cs.vf; fn = cs.fn; }
-    let extra = -0.12 * (this.prevZ || 0) + this.dayDir(mod) * day.str * 0.08 * (isRTH(mod) ? 1 : 0.5) + this.f1 + this.f2;
+    let lvF = 0;
+    if (!cs) {
+      const ls = this.lvStep(sigBase0, mod, day);
+      if (ls) { lvF = ls.f; rv *= ls.rv; vf *= ls.vf; const f0 = fn; fn = q => 0.4 * f0(q); } // the level fight outweighs the regime for a few minutes
+      lvF += this.gapStep(sigBase0, mod);
+    } else { this.lv = null; this.gf = null; }
+    let extra = lvF + -0.12 * (this.prevZ || 0) + this.dayDir(mod) * day.str * 0.08 * (isRTH(mod) ? 1 : 0.5) + this.f1 + this.f2;
     if (this.shock) { extra += this.shock.dir * this.shock.size; rv *= 1.8; vf *= 2.2; if (--this.shock.left <= 0) this.shock = null; }
     else for (const x of this.waveToday) if (!x.done && x.k === 0 && x.w.mod - mod > 0 && x.w.mod - mod <= 8) { rv *= 0.72; vf *= 0.8; break; } // quiet positioning before a scheduled release
 
@@ -960,6 +1026,7 @@ class Market {
         else { s.phase = 'expand'; s.left = R.int(6, 16); this.events.push({ i: idx, type: 'BO', dir: s.dir }); }
       }
     }
+    if (b.v > 0) { this.vw.pv += (b.h + b.l + b.c) / 3 * b.v; this.vw.vv += b.v; this.vw.m = this.vw.pv / this.vw.vv; }
     if (b.h > day.ethH) day.ethH = b.h; if (b.l < day.ethL) day.ethL = b.l;
     if (isRTH(b.mod)) { if (b.h > day.rthH) day.rthH = b.h; if (b.l < day.rthL) day.rthL = b.l; day.rthC = b.c; day.rthV += b.v; }
     else if (b.off < RTH0 + 1440 - ETH_START) { if (b.h > day.onH) day.onH = b.h; if (b.l < day.onL) day.onL = b.l; }
@@ -1582,7 +1649,13 @@ function oracleText() {
     const t = P === 'leg1' || P === 'leg2' ? `${nm} ${ar(c.dir)} · heavy volume, big candles` : P === 'bounce' ? `Relief bounce ${ar(-c.dir)} inside a ${nm.toLowerCase()} · more ${c.dir < 0 ? 'selling' : 'buying'} likely` : P === 'base' ? `Capitulation ${c.dir < 0 ? 'low' : 'high'} forming · V ${ar(-c.dir)} next` : `V ${ar(-c.dir)} recovery underway`;
     return dayTag + t;
   }
-  if (code === 'trendUp' || code === 'trendDown') t = `Trend ${ar(s.dir)} · about ${Math.max(1, s.left)}m left`;
+  const lvA = M.lv, nm = lvA ? lvA.name : '';
+  if (lvA && lvA.kind === 'bounce') t = `${nm === 'VWAP' ? 'VWAP' : nm} holding · bounce ${ar(lvA.dir)} underway`;
+  else if (lvA && lvA.kind === 'poke') t = `Stop run ${ar(lvA.dir)} through ${nm} · snap back ${ar(-lvA.dir)} next`;
+  else if (lvA && lvA.kind === 'reject') t = `Sweep of ${nm} failed · reversal ${ar(lvA.dir)} running`;
+  else if (lvA && lvA.kind === 'break') t = `${nm} breaking ${ar(lvA.dir)} · no bounce this time`;
+  else if (M.gf) t = `Gap fill ${ar(M.gf.dir)} in progress · target ${fp(M.gf.tgt)}`;
+  else if (code === 'trendUp' || code === 'trendDown') t = `Trend ${ar(s.dir)} · about ${Math.max(1, s.left)}m left`;
   else if (code === 'range') t = `Range · about ${Math.max(1, s.left)}m left, then a breakout`;
   else if (code === 'chop') t = 'Choppy and directionless';
   else if (code === 'breakout') t = s.phase === 'approach' ? `Breakout ${ar(s.dir)} loading${s.fake ? ' · looks FAKE' : ' · looks real'}` : s.phase === 'expand' ? `Breakout running ${ar(s.dir)}` : s.phase === 'poke' ? `Fake poke ${ar(s.dir)} · reversal next` : `Fakeout reversing ${ar(-s.dir)}`;
@@ -2042,7 +2115,7 @@ function renderKey() {
     k += `<span><b>Past days</b>${Object.entries(types).map(([t, n]) => `${DAY_DEF[t].label.toLowerCase()} ${n}`).join(', ') || 'none yet'}</span>`;
     k += '<span><b>Regimes</b></span>' + RG_CODES.map(r => `<span><i style="background:${c[r]}"></i>${RG_LABEL[r]}</span>`).join('');
   }
-  if (st.key.setups) k += `<span><b>Setups</b></span><span>PB pullback entry</span><span>R range edge fade</span><span>BO breakout</span><span>FB failed breakout reversal</span><span>VR V reversal</span><span>N news spike</span><span>▲ long, ▼ short</span>`;
+  if (st.key.setups) k += `<span><b>Setups</b></span><span>PB pullback entry</span><span>R range edge fade</span><span>BO breakout</span><span>FB failed breakout reversal</span><span>VR V reversal</span><span>LV key-level rejection</span><span>VW VWAP bounce</span><span>SW liquidity sweep reversal</span><span>GF gap fill</span><span>N news spike</span><span>▲ long, ▼ short</span>`;
   box.innerHTML = k + '</div>';
 }
 
@@ -2312,7 +2385,7 @@ function drawMain(p, i0, i1, hj) {
       const b = S[i], seen = new Set(); let upOff = 0, dnOff = 0;
       for (const e of evs) {
         const kk = e.type + e.dir; if (seen.has(kk)) continue; seen.add(kk);
-        const col = e.type === 'PB' ? (e.dir > 0 ? C.up : C.down) : e.type === 'R' ? C.muted : e.type === 'BO' ? C.accent : e.type === 'N' ? C.ink : e.type === 'VR' ? C.rgV : C.fb;
+        const col = e.type === 'PB' ? (e.dir > 0 ? C.up : C.down) : e.type === 'R' ? C.muted : e.type === 'BO' ? C.accent : e.type === 'N' ? C.ink : e.type === 'VR' ? C.rgV : e.type === 'VW' ? C.vwap : e.type === 'LV' ? C.lvl : e.type === 'GF' ? C.accent : C.fb;
         const X = xOf(i), s = Math.max(3.5, Math.min(6, sp * 0.45));
         ctx.fillStyle = col; ctx.beginPath();
         if (e.dir > 0) { const Y = y(b.l) + 6 + dnOff; ctx.moveTo(X, Y); ctx.lineTo(X - s, Y + s * 1.5); ctx.lineTo(X + s, Y + s * 1.5); ctx.fill(); if (sp >= 7) { ctx.textBaseline = 'top'; halo(e.type, X, Y + s * 1.5 + 2, col); } dnOff += sp >= 7 ? 22 : 10; }
