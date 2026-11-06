@@ -154,6 +154,8 @@ html,body{overflow:hidden}
 .menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28);padding:10px 12px;max-height:min(72vh,520px);overflow-y:auto;width:max-content;max-width:min(92vw,380px)}
 .menupanel.right{left:auto;right:0}
 #modebtn::after{display:none}
+#otype .sm{display:none}
+@media (max-width:700px){#otype .lg{display:none}#otype .sm{display:inline}}
 .warpgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .warpgrid .minibtn{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 4px;line-height:1.2}
 .warpgrid .minibtn small{color:var(--muted);font-size:11px}
@@ -295,9 +297,10 @@ html,body{overflow:hidden}
   .tradebar .pt{width:54px;padding:5px 3px}
   .tradebar .group{gap:4px}
   .pnlbig{font-size:30px}
-  .tradebar>:nth-child(1),.tradebar>:nth-child(2){order:1}
+  .tradebar>:nth-child(1),.tradebar>:nth-child(2),.tradebar>:nth-child(3){order:1}
+  #otype button{padding:4px 7px;font-size:13px;height:32px}
   .tradebar .pnlbox{order:2;margin-left:auto;align-items:flex-end}
-  .tradebar>:nth-child(3){order:3}
+  .tradebar>:nth-child(4){order:3}
   .tradebar>.menuwrap{order:4;margin-left:auto}
   .actionbar button{height:46px}
 }
@@ -427,6 +430,10 @@ html,body{overflow:hidden}
       <div class="qty"><button id="qtyDown" class="icon" aria-label="Decrease quantity" type="button">−</button><input id="qty" type="number" value="1" min="1" max="50" step="1" inputmode="numeric"><button id="qtyUp" class="icon" aria-label="Increase quantity" type="button">+</button></div>
     </div>
     <div class="group">
+      <span class="gl hm">Order</span>
+      <div class="seg" id="otype" role="group" aria-label="Order type"><button type="button" data-t="mkt" aria-pressed="true"><span class="lg">Market</span><span class="sm">Mkt</span></button><button type="button" data-t="lmt" aria-pressed="false"><span class="lg">Limit</span><span class="sm">Lmt</span></button></div>
+    </div>
+    <div class="group">
       <span class="gl">Stop pts</span><input id="stopPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
       <span class="gl">Target pts</span><input id="tgtPts" class="pt" type="number" min="0" step="1" placeholder="off" inputmode="numeric">
     </div>
@@ -447,7 +454,7 @@ html,body{overflow:hidden}
 
   <section class="actionbar" id="actionbar">
     <button id="buyBtn" class="buy" type="button" title="Buy at market (B)">Buy Mkt</button>
-    <button id="flatBtn" class="flat" type="button" title="Close position (F)" disabled>Flatten</button>
+    <button id="flatBtn" class="flat" type="button" title="Close position and cancel working orders (F)" disabled>Flatten</button>
     <button id="sellBtn" class="sell" type="button" title="Sell at market (S)">Sell Mkt</button>
   </section>
 </div>
@@ -1020,9 +1027,10 @@ function computeInd() {
    TRADING — practice-money paper trading against the live tape
    ===================================================================== */
 const CONTRACTS = { NQ: { mult: 20 }, MNQ: { mult: 2 } };
-const AC = { contract: 'MNQ', bal: 50000, realized: 0, qty: 0, avg: 0, stopPx: null, tgtPx: null, trades: [] };
+const AC = { contract: 'MNQ', bal: 50000, realized: 0, qty: 0, avg: 0, stopPx: null, tgtPx: null, trades: [], orders: [] };
+let ordId = 1;
 let RT = null; // the round trip in progress (flat -> flat), settled by the game layer
-function resetAccount() { RT = null; AC.realized = 0; AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null; AC.trades = []; }
+function resetAccount() { RT = null; AC.realized = 0; AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null; AC.trades = []; AC.orders = []; }
 const fillPrice = dir => dir > 0 ? rt(M.p) + TICK : rt(M.p) - TICK;
 const fmtSigned = v => (v >= 0 ? '+$' : '-$') + Math.round(Math.abs(v)).toLocaleString('en-US');
 function timeStr() { return `${dayShort(M.d)} ${hhmm(M.modNow())}:${String(simSec()).padStart(2, '0')}`; }
@@ -1036,10 +1044,10 @@ function applyBracket() {
 const simNow = () => M ? M.minutes + M.sec / TPM : 0;
 function logTrade(rec) { AC.trades.push(rec); if (AC.trades.length > 500) AC.trades.shift(); buildTradeMap(); renderTradeLog(); }
 
-function execute(dir, qty, tag) {
+function execute(dir, qty, tag, atPx) {
   if (!M || GM.locked) return;
   qty = Math.max(1, Math.round(qty || 1));
-  const price = fillPrice(dir), mult = CONTRACTS[AC.contract].mult, signBefore = Math.sign(AC.qty), idx = M.curIdx(), time = timeStr();
+  const price = atPx != null ? atPx : fillPrice(dir), mult = CONTRACTS[AC.contract].mult, signBefore = Math.sign(AC.qty), idx = M.curIdx(), time = timeStr();
   const hb = { stop: AC.stopPx != null, tgt: AC.tgtPx != null };
   if (AC.qty === 0 || Math.sign(AC.qty) === dir) {
     if (AC.qty === 0) RT = { pnl: 0, t0: simNow() };
@@ -1073,6 +1081,18 @@ function closeAll(tag, atPrice) {
   renderTrade();
   settleTrade({ raw: r.pnl + pnl, tag: tag || 'Flatten', hadStop: hb.stop, hadTgt: hb.tgt, dur: simNow() - (r.t0 != null ? r.t0 : simNow()) });
 }
+function checkPending() {
+  if (!AC.orders.length || GM.locked) return;
+  const p = M.p;
+  for (const o of AC.orders.slice()) {
+    if (GM.locked) break;
+    if ((o.side > 0 && p <= o.px) || (o.side < 0 && p >= o.px)) {
+      AC.orders = AC.orders.filter(x => x !== o);
+      execute(o.side, o.qty, 'Limit', o.px);
+      toast(`${o.side > 0 ? 'Buy' : 'Sell'} limit filled @ ${fp(o.px)}`, 'win');
+    }
+  }
+}
 function checkOrders() {
   if (AC.qty === 0 || (AC.stopPx == null && AC.tgtPx == null)) return;
   const p = M.p;
@@ -1103,7 +1123,7 @@ function renderTrade() {
   $('#hdrRealized').textContent = fmtSigned(AC.realized);
   $('#hdrRealized').className = 'hpnl-big ' + (AC.realized === 0 ? 'pos-flat' : AC.realized > 0 ? 'pos-long' : 'pos-short');
   $('#acctEq').textContent = `Equity $${Math.round(equity).toLocaleString('en-US')}`;
-  $('#flatBtn').disabled = AC.qty === 0;
+  $('#flatBtn').disabled = AC.qty === 0 && !AC.orders.length;
   $('#contract').disabled = AC.qty !== 0;
 }
 function tradeLogHTML() {
@@ -1336,7 +1356,7 @@ function startLevel(n, intro) {
   if (intro) showOver('intro');
 }
 function finishLevel(pass) {
-  LV.active = false; GM.locked = true; if (!paused) togglePause();
+  LV.active = false; GM.locked = true; AC.orders = []; if (!paused) togglePause();
   if (pass) { if (G.lastFail === LV.n) unlock('comeback'); G.lastFail = 0; G.cleared++; G.lvl = LV.n + 1; G.maxLvl = Math.max(G.maxLvl, G.lvl); LV.reward = award('Level cleared', true); LV.coins = 50 + 25 * LV.n; G.coins += LV.coins; confetti(140); }
   else { G.fails++; G.lastFail = LV.n; shake(); }
   checkBadges(); saveG(); renderGame(); showOver(pass ? 'pass' : 'fail');
@@ -1391,7 +1411,7 @@ function warpOptions() {
 }
 function warpSkip(targetOff) {
   const d0 = M.d; let guard = 0;
-  while (!(M.off >= targetOff && M.sec === 0) && M.d === d0 && !GM.locked && guard++ < 200000) { M.tick(); checkOrders(); checkLimit(); }
+  while (!(M.off >= targetOff && M.sec === 0) && M.d === d0 && !GM.locked && guard++ < 200000) { M.tick(); checkOrders(); checkPending(); checkLimit(); }
   D = null; syncSeries(); computeInd(); toLatest(); renderTrade(); renderGame(); saveG(); req();
 }
 function renderWarp() {
@@ -1790,9 +1810,27 @@ function regenerate() {
 $('#contract').onchange = () => { AC.contract = $('#contract').value; renderTrade(); };
 $('#qtyUp').onclick = () => { $('#qty').value = clamp((parseInt($('#qty').value, 10) || 1) + 1, 1, 50); };
 $('#qtyDown').onclick = () => { $('#qty').value = clamp((parseInt($('#qty').value, 10) || 1) - 1, 1, 50); };
-$('#buyBtn').onclick = () => execute(1, parseInt($('#qty').value, 10) || 1);
-$('#sellBtn').onclick = () => execute(-1, parseInt($('#qty').value, 10) || 1);
-$('#flatBtn').onclick = () => closeAll('Flatten');
+let orderType = 'mkt';
+function setOrderType(t) {
+  orderType = t; const lm = t === 'lmt';
+  for (const b of document.querySelectorAll('#otype button')) b.setAttribute('aria-pressed', String(b.dataset.t === t));
+  $('#buyBtn').textContent = lm ? 'Buy Limit' : 'Buy Mkt'; $('#sellBtn').textContent = lm ? 'Sell Limit' : 'Sell Mkt';
+  $('#buyBtn').title = lm ? 'Place a buy limit order (B)' : 'Buy at market (B)'; $('#sellBtn').title = lm ? 'Place a sell limit order (S)' : 'Sell at market (S)';
+}
+function placeOrder(dir) {
+  const qty = parseInt($('#qty').value, 10) || 1;
+  if (orderType !== 'lmt') { execute(dir, qty); return; }
+  if (!M || GM.locked) return;
+  if (AC.orders.length >= 4) { toast('Max 4 working orders. Cancel one first'); return; }
+  const dist = Math.max(4, Math.round(M.p * 0.0004));
+  AC.orders.push({ id: ordId++, side: dir, qty, px: dir > 0 ? rt(M.p - dist) : rt(M.p + dist) });
+  toast(`${dir > 0 ? 'Buy' : 'Sell'} limit placed. Drag the line to move it, tap the ✕ to cancel`); renderTrade(); req();
+}
+function flattenAll() { const had = AC.orders.length; AC.orders = []; closeAll('Flatten'); if (had) toast('Working orders cancelled'); renderTrade(); req(); }
+for (const b of document.querySelectorAll('#otype button')) b.onclick = () => setOrderType(b.dataset.t);
+$('#buyBtn').onclick = () => placeOrder(1);
+$('#sellBtn').onclick = () => placeOrder(-1);
+$('#flatBtn').onclick = flattenAll;
 $('#stopPts').addEventListener('change', applyBracket);
 $('#tgtPts').addEventListener('change', applyBracket);
 
@@ -2089,8 +2127,8 @@ function drawMain(p, i0, i1, hj) {
   for (let k = 3; k >= 0; k--) if (st.ov['ma' + k]) drawLine(I.ma[k], maCol(k), 1.5, y, a, z);
 
   // live position: entry / stop / target lines (stop and target are draggable), plus fill markers
+  orderBtns = [];
   if (AC.qty !== 0) {
-    orderBtns = [];
     const risk = AC.stopPx != null ? Math.abs(AC.avg - AC.stopPx) : 0;
     const rr = (AC.tgtPx != null && risk > 0) ? ` · ${(Math.abs(AC.tgtPx - AC.avg) / risk).toFixed(1)}R` : '';
     drawOrderLine(y, AC.avg, C.ink, [2, 2], 'ENTRY' + rr, false);
@@ -2100,8 +2138,8 @@ function drawMain(p, i0, i1, hj) {
     const cl = v => clamp(v, top + 34, top + h - 16);
     if (AC.tgtPx == null) orderPill('＋ TARGET', C.up, 'add-target', cl(eY - sg * off));
     if (AC.stopPx == null) orderPill('＋ STOP', C.down, 'add-stop', cl(eY + sg * off));
-  } else { orderBtns = [];
   }
+  for (const o of AC.orders) drawOrderLine(y, o.px, o.side > 0 ? C.up : C.down, [9, 4], `${o.side > 0 ? 'BUY' : 'SELL'} LIMIT ×${o.qty} · ${ptsTxt(o.px - M.p)} pts away`, lineDrag === 'ord:' + o.id, undefined, 'ord:' + o.id);
   if (D.trMap && st.ov.fills) {
     for (let i = i0; i <= i1; i++) {
       const trs = D.trMap.get(i); if (!trs) continue;
@@ -2393,8 +2431,9 @@ function drawEventStrip(p, i0, i1) {
 
 /* ---------- interaction ---------- */
 let mainYOf = null, mainInv = null, mainTop = 0, mainH = 0, lineDrag = null;
-const orderBtnAt = (x, y) => AC.qty === 0 ? null : orderBtns.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+const orderBtnAt = (x, y) => orderBtns.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
 function orderBtnDown(b) {
+  if (b.k.startsWith('clear-ord:')) { const id = +b.k.slice(10); AC.orders = AC.orders.filter(o => o.id !== id); renderTrade(); req(); return; }
   const sg = Math.sign(AC.qty), dist = Math.max(4, Math.round(AC.avg * 0.0004));
   if (b.k === 'add-stop') {
     AC.stopPx = sg > 0 ? Math.min(rt(AC.avg - dist), rt(M.p - 4 * TICK)) : Math.max(rt(AC.avg + dist), rt(M.p + 4 * TICK));
@@ -2407,10 +2446,13 @@ function orderBtnDown(b) {
   renderTrade(); req();
 }
 function lineHit(offY) {
-  if (AC.qty === 0 || !mainYOf || offY < mainTop || offY > mainTop + mainH) return null;
+  if (!mainYOf || offY < mainTop || offY > mainTop + mainH) return null;
   const tol = 8;
-  if (AC.stopPx != null && Math.abs(offY - mainYOf(AC.stopPx)) <= tol) return 'stop';
-  if (AC.tgtPx != null && Math.abs(offY - mainYOf(AC.tgtPx)) <= tol) return 'target';
+  if (AC.qty !== 0) {
+    if (AC.stopPx != null && Math.abs(offY - mainYOf(AC.stopPx)) <= tol) return 'stop';
+    if (AC.tgtPx != null && Math.abs(offY - mainYOf(AC.tgtPx)) <= tol) return 'target';
+  }
+  for (const o of AC.orders) if (Math.abs(offY - mainYOf(o.px)) <= tol) return 'ord:' + o.id;
   return null;
 }
 const ptrs = new Map(); let drag = null, pinch = null;
@@ -2428,6 +2470,11 @@ cv.addEventListener('pointerdown', e => {
 });
 cv.addEventListener('pointermove', e => {
   if (drawDrag) { drawMove(e); return; }
+  if (lineDrag && lineDrag.startsWith('ord:')) {
+    const o = AC.orders.find(x => x.id === +lineDrag.slice(4)), price = rt(mainInv(e.offsetY));
+    if (o) o.px = o.side > 0 ? Math.min(price, rt(M.p - TICK)) : Math.max(price, rt(M.p + TICK));
+    req(); return;
+  }
   if (lineDrag) {
     const dir = Math.sign(AC.qty), price = rt(mainInv(e.offsetY));
     if (lineDrag === 'stop') AC.stopPx = dir > 0 ? Math.min(price, rt(M.p - TICK)) : Math.max(price, rt(M.p + TICK));
@@ -2472,9 +2519,9 @@ cv.addEventListener('dblclick', () => { toLatest(); req(); });
 cv.addEventListener('keydown', e => {
   if ((e.key === 'Delete' || e.key === 'Backspace') && DR.sel != null) { deleteSel(); e.preventDefault(); return; }
   if (e.key === 'Escape' && (DR.tool || DR.sel != null)) { setTool(null); DR.sel = null; drawDrag = null; renderDrawUI(); req(); e.preventDefault(); return; }
-  if (e.key === 'b' || e.key === 'B') { execute(1, parseInt($('#qty').value, 10) || 1); e.preventDefault(); return; }
-  if (e.key === 's' || e.key === 'S') { execute(-1, parseInt($('#qty').value, 10) || 1); e.preventDefault(); return; }
-  if (e.key === 'f' || e.key === 'F') { closeAll('Flatten'); e.preventDefault(); return; }
+  if (e.key === 'b' || e.key === 'B') { placeOrder(1); e.preventDefault(); return; }
+  if (e.key === 's' || e.key === 'S') { placeOrder(-1); e.preventDefault(); return; }
+  if (e.key === 'f' || e.key === 'F') { flattenAll(); e.preventDefault(); return; }
   const vis = PW() / view.sp, zoom = f => { const idx = idxAt(PW() / 2); view.sp = clamp(view.sp * f, SPMIN, SPMAX); view.end = idx + (PW() / 2) / view.sp - 0.5; };
   if (e.key === 'ArrowLeft') view.end -= vis * 0.1;
   else if (e.key === 'ArrowRight') view.end += vis * 0.1;
@@ -2513,7 +2560,7 @@ function loop(t) {
   if (!paused && M) {
     acc += dt * speed * (t < FX.slowUntil ? 0.25 : 1) * (TPM / 60);
     const n = Math.floor(acc);
-    if (n > 0) { acc -= n; for (let i = 0; i < n; i++) { M.tick(); checkOrders(); checkLimit(); } pending = true; }
+    if (n > 0) { acc -= n; for (let i = 0; i < n; i++) { M.tick(); checkOrders(); checkPending(); checkLimit(); } pending = true; }
   }
   if (pending && t - lastSync > 90) { sync(t); lastSync = t; pending = false; }
   updateClock(); renderTrade(); gameTick(t);
