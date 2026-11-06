@@ -1919,13 +1919,29 @@ function drawStep(arr, col, y, i0, i1, dash, label) {
   ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]);
   if (lastX !== null) { ctx.font = font(11, 600); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; halo(label, Math.min(lastX, PW() - 4), y(lastV) - 1, col); }
 }
-function drawOrderLine(y, price, col, dash, label, active) {
+function drawOrderLine(y, price, col, dash, label, active, sub, clearKind) {
   const Y = Math.round(y(price)) + 0.5;
   ctx.strokeStyle = col; ctx.lineWidth = active ? 2.5 : 1.25; ctx.setLineDash(active ? [] : dash);
   ctx.beginPath(); ctx.moveTo(0, Y); ctx.lineTo(PW(), Y); ctx.stroke(); ctx.setLineDash([]);
   ctx.font = font(10.5, 700); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
   halo(label, 6, Y - 2, col);
-  tag(fp(price), Y, col, C.panel);
+  if (clearKind) {
+    const cx = 6 + ctx.measureText(label).width + 14, cy = Y - 9;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.panel; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(cx - 2.6, cy - 2.6); ctx.lineTo(cx + 2.6, cy + 2.6); ctx.moveTo(cx + 2.6, cy - 2.6); ctx.lineTo(cx - 2.6, cy + 2.6); ctx.stroke();
+    orderBtns.push({ k: 'clear-' + clearKind, x: cx - 11, y: cy - 11, w: 22, h: 22 });
+  }
+  tag(fp(price), Y, col, C.panel, sub);
+}
+let orderBtns = [];
+const ptsTxt = v => Math.abs(v).toFixed(2).replace(/\.?0+$/, '');
+const plAt = px => (px - AC.avg) * AC.qty * CONTRACTS[AC.contract].mult;
+function orderPill(text, col, k, cy) {
+  const touch = matchMedia('(pointer:coarse)').matches, bw = 96, bh = touch ? 30 : 22, bx = PW() - bw - 12, by = cy - bh / 2;
+  ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 11); else ctx.rect(bx, by, bw, bh);
+  ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([]); ctx.stroke();
+  ctx.font = font(11.5, 700); ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, bx + bw / 2, by + bh / 2 + 0.5);
+  orderBtns.push({ k, x: bx, y: by, w: bw, h: bh });
 }
 
 function barCountdown() {
@@ -2011,6 +2027,7 @@ function drawMain(p, i0, i1, hj) {
   for (let k = 0; k < 4; k++) if (st.ov['ma' + k]) inc(I.ma[k]);
   if (st.ov.bb) { inc(I.bbUp); inc(I.bbLo); }
   if (intraday && st.ov.vwap) inc(I.vwap);
+  if (AC.qty !== 0 && !lineDrag) for (const v of [AC.avg, AC.stopPx, AC.tgtPx]) if (v != null && v === v) { if (v < lo) lo = v; if (v > hi) hi = v; }
   if (!isFinite(lo)) { lo = 0; hi = 1; }
   const span = Math.max(hi - lo, 1), ribbon = st.key.regimes ? 10 : 0;
   lo -= span * 0.06; hi += span * 0.14;
@@ -2073,9 +2090,17 @@ function drawMain(p, i0, i1, hj) {
 
   // live position: entry / stop / target lines (stop and target are draggable), plus fill markers
   if (AC.qty !== 0) {
-    drawOrderLine(y, AC.avg, C.ink, [2, 2], 'ENTRY', false);
-    if (AC.stopPx != null) drawOrderLine(y, AC.stopPx, C.down, [5, 3], 'STOP', lineDrag === 'stop');
-    if (AC.tgtPx != null) drawOrderLine(y, AC.tgtPx, C.up, [5, 3], 'TARGET', lineDrag === 'target');
+    orderBtns = [];
+    const risk = AC.stopPx != null ? Math.abs(AC.avg - AC.stopPx) : 0;
+    const rr = (AC.tgtPx != null && risk > 0) ? ` · ${(Math.abs(AC.tgtPx - AC.avg) / risk).toFixed(1)}R` : '';
+    drawOrderLine(y, AC.avg, C.ink, [2, 2], 'ENTRY' + rr, false);
+    if (AC.stopPx != null) drawOrderLine(y, AC.stopPx, C.down, [5, 3], `STOP · ${ptsTxt(AC.avg - AC.stopPx)} pts · ${money2(plAt(AC.stopPx))}`, lineDrag === 'stop', money2(plAt(AC.stopPx)), 'stop');
+    if (AC.tgtPx != null) drawOrderLine(y, AC.tgtPx, C.up, [5, 3], `TARGET · ${ptsTxt(AC.tgtPx - AC.avg)} pts · ${money2(plAt(AC.tgtPx))}`, lineDrag === 'target', money2(plAt(AC.tgtPx)), 'target');
+    const eY = y(AC.avg), sg = Math.sign(AC.qty), off = 26;
+    const cl = v => clamp(v, top + 34, top + h - 16);
+    if (AC.tgtPx == null) orderPill('＋ TARGET', C.up, 'add-target', cl(eY - sg * off));
+    if (AC.stopPx == null) orderPill('＋ STOP', C.down, 'add-stop', cl(eY + sg * off));
+  } else { orderBtns = [];
   }
   if (D.trMap && st.ov.fills) {
     for (let i = i0; i <= i1; i++) {
@@ -2368,6 +2393,19 @@ function drawEventStrip(p, i0, i1) {
 
 /* ---------- interaction ---------- */
 let mainYOf = null, mainInv = null, mainTop = 0, mainH = 0, lineDrag = null;
+const orderBtnAt = (x, y) => AC.qty === 0 ? null : orderBtns.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+function orderBtnDown(b) {
+  const sg = Math.sign(AC.qty), dist = Math.max(4, Math.round(AC.avg * 0.0004));
+  if (b.k === 'add-stop') {
+    AC.stopPx = sg > 0 ? Math.min(rt(AC.avg - dist), rt(M.p - 4 * TICK)) : Math.max(rt(AC.avg + dist), rt(M.p + 4 * TICK));
+    $('#stopPts').value = Math.abs(rt(AC.avg - AC.stopPx)); lineDrag = 'stop';
+  } else if (b.k === 'add-target') {
+    AC.tgtPx = sg > 0 ? Math.max(rt(AC.avg + 2 * dist), rt(M.p + 4 * TICK)) : Math.min(rt(AC.avg - 2 * dist), rt(M.p - 4 * TICK));
+    $('#tgtPts').value = Math.abs(rt(AC.avg - AC.tgtPx)); lineDrag = 'target';
+  } else if (b.k === 'clear-stop') { AC.stopPx = null; $('#stopPts').value = ''; }
+  else if (b.k === 'clear-target') { AC.tgtPx = null; $('#tgtPts').value = ''; }
+  renderTrade(); req();
+}
 function lineHit(offY) {
   if (AC.qty === 0 || !mainYOf || offY < mainTop || offY > mainTop + mainH) return null;
   const tol = 8;
@@ -2380,6 +2418,7 @@ cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId); cv.focus({ preventScroll: true });
   if (ptrs.size === 0) {
     if (DR.tool && drawDown(e)) return;
+    const ob = orderBtnAt(e.offsetX, e.offsetY); if (ob) { orderBtnDown(ob); return; }
     const hit = lineHit(e.offsetY); if (hit) { lineDrag = hit; req(); return; }
     if (drawDown(e)) return;
   }
@@ -2409,7 +2448,7 @@ cv.addEventListener('pointermove', e => {
     req(); return;
   }
   if (e.pointerType === 'mouse') {
-    cv.style.cursor = DR.tool ? 'crosshair' : lineHit(e.offsetY) ? 'ns-resize' : (DR.show && drHit(e.offsetX, e.offsetY)) ? 'move' : 'crosshair';
+    cv.style.cursor = DR.tool ? 'crosshair' : orderBtnAt(e.offsetX, e.offsetY) ? 'pointer' : lineHit(e.offsetY) ? 'ns-resize' : (DR.show && drHit(e.offsetX, e.offsetY)) ? 'move' : 'crosshair';
     hover = { x: e.offsetX, y: e.offsetY }; req();
   }
 });
