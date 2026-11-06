@@ -1133,7 +1133,7 @@ const CONTRACTS = { NQ: { mult: 20 }, MNQ: { mult: 2 } };
 const AC = { contract: 'MNQ', bal: 50000, realized: 0, qty: 0, avg: 0, stopPx: null, tgtPx: null, trades: [], orders: [] };
 let ordId = 1;
 let RT = null; // the round trip in progress (flat -> flat), settled by the game layer
-function resetAccount() { RT = null; AC.realized = 0; AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null; AC.trades = []; AC.orders = []; }
+function resetAccount() { $('#stopPts').value = ''; $('#tgtPts').value = ''; RT = null; AC.realized = 0; AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null; AC.trades = []; AC.orders = []; }
 // last traded price: exactly what the chart shows as the current price (everything about your trades uses this)
 const LP = () => { const b = M.base[M.base.length - 1]; return b ? b.c : rt(M.p); };
 const fillPrice = dir => dir > 0 ? rt(LP()) + TICK : rt(LP()) - TICK;
@@ -1166,7 +1166,7 @@ function execute(dir, qty, tag, atPx) {
     AC.realized += pnl; AC.qty += dir * closingQty;
     if (!RT) RT = { pnl: 0, t0: simNow() }; RT.pnl += pnl;
     logTrade({ idx, time, side: dir > 0 ? 'Buy' : 'Sell', qty: closingQty, price, pnl, tag: tag || 'Close' });
-    if (AC.qty === 0) { const r = RT; RT = null; settleTrade({ raw: r.pnl, tag: tag || 'Close', hadStop: hb.stop, hadTgt: hb.tgt, dur: simNow() - (r.t0 != null ? r.t0 : simNow()) }); }
+    if (AC.qty === 0) { const r = RT; RT = null; $('#stopPts').value = ''; $('#tgtPts').value = ''; /* every trade starts with a clean SL/TP */ settleTrade({ raw: r.pnl, tag: tag || 'Close', hadStop: hb.stop, hadTgt: hb.tgt, dur: simNow() - (r.t0 != null ? r.t0 : simNow()) }); }
     const remainder = qty - closingQty;
     if (remainder > 0) { RT = { pnl: 0, t0: simNow() }; AC.qty = dir * remainder; AC.avg = price; logTrade({ idx, time, side: dir > 0 ? 'Buy' : 'Sell', qty: remainder, price, pnl: null, tag: 'Flip' }); }
     else if (AC.qty === 0) AC.avg = 0;
@@ -1182,7 +1182,7 @@ function closeAll(tag, atPrice) {
   AC.realized += pnl;
   logTrade({ idx: M.curIdx(), time: timeStr(), side: dir > 0 ? 'Buy' : 'Sell', qty, price, pnl, tag: tag || 'Flatten' });
   AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null;
-  if ($('#stopPts').value === '0') $('#stopPts').value = '';
+  $('#stopPts').value = ''; $('#tgtPts').value = ''; // every trade starts with a clean SL/TP
   const r = RT || { pnl: 0 }; RT = null;
   renderTrade();
   settleTrade({ raw: r.pnl + pnl, tag: tag || 'Flatten', hadStop: hb.stop, hadTgt: hb.tgt, dur: simNow() - (r.t0 != null ? r.t0 : simNow()) });
