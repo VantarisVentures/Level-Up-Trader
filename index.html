@@ -586,7 +586,7 @@ function makeRng(seed) {
 function sessionMult(mod) {
   if (isRTH(mod)) {
     const m = mod - RTH0;
-    let v = 1.0 + 1.4 * Math.exp(-m / 22);
+    let v = 1.0 + 1.1 * Math.exp(-m / 6) + 1.5 * Math.exp(-m / 30); // the bell hits hard, then settles over the first hour
     v *= 1 - 0.38 * Math.exp(-((m - 195) ** 2) / (2 * 40 * 40));
     v += 0.35 * Math.exp(-((m - 270) ** 2) / (2 * 8 * 8));
     v += 0.5 * Math.exp(-(389 - m) / 12);
@@ -856,6 +856,13 @@ class Market {
       this.shock = { left: R.int(2, 5), dir: R.u() < 0.5 ? 1 : -1, size: R.range(1, 2.2) };
       this.v = Math.max(this.v, R.range(2.5, 4.5));
       this.events.push({ i: this.nextIdx(), type: 'N', dir: this.shock.dir });
+    }
+
+    // opening bell: most days open with a quick directional thrust (no news marker, it's just the open)
+    if (mod === RTH0 && !this.shock && R.u() < 0.75) {
+      const dd = this.dayDir(mod) * day.str;
+      this.shock = { left: R.int(2, 4), dir: R.u() < 0.5 + 0.25 * dd ? 1 : -1, size: R.range(0.15, 0.4) * Math.min(1, this.scen ? this.scen.vol : 1) };
+      this.v = Math.max(this.v, R.range(1.2, 1.6));
     }
 
     // intraday regime bookkeeping
