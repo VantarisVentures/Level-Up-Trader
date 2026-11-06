@@ -1038,7 +1038,7 @@ function timeStr() { return `${dayShort(M.d)} ${hhmm(M.modNow())}:${String(simSe
 function applyBracket() {
   if (AC.qty === 0) { AC.stopPx = null; AC.tgtPx = null; return; }
   const sign = Math.sign(AC.qty), sp = parseFloat($('#stopPts').value), tp = parseFloat($('#tgtPts').value);
-  AC.stopPx = (isFinite(sp) && sp > 0) ? rt(AC.avg - sign * sp) : null;
+  AC.stopPx = (isFinite(sp) && sp >= 0) ? rt(AC.avg - sign * sp) : null;
   AC.tgtPx = (isFinite(tp) && tp > 0) ? rt(AC.avg + sign * tp) : null;
 }
 const simNow = () => M ? M.minutes + M.sec / TPM : 0;
@@ -1077,6 +1077,7 @@ function closeAll(tag, atPrice) {
   AC.realized += pnl;
   logTrade({ idx: M.curIdx(), time: timeStr(), side: dir > 0 ? 'Buy' : 'Sell', qty, price, pnl, tag: tag || 'Flatten' });
   AC.qty = 0; AC.avg = 0; AC.stopPx = null; AC.tgtPx = null;
+  if ($('#stopPts').value === '0') $('#stopPts').value = '';
   const r = RT || { pnl: 0 }; RT = null;
   renderTrade();
   settleTrade({ raw: r.pnl + pnl, tag: tag || 'Flatten', hadStop: hb.stop, hadTgt: hb.tgt, dur: simNow() - (r.t0 != null ? r.t0 : simNow()) });
@@ -2138,6 +2139,7 @@ function drawMain(p, i0, i1, hj) {
     const cl = v => clamp(v, top + 34, top + h - 16);
     if (AC.tgtPx == null) orderPill('＋ TARGET', C.up, 'add-target', cl(eY - sg * off));
     if (AC.stopPx == null) orderPill('＋ STOP', C.down, 'add-stop', cl(eY + sg * off));
+    else if (sg * (AC.stopPx - AC.avg) < 0 && sg * (M.p - AC.avg) >= 2 * TICK) orderPill('🛡 BREAKEVEN', C.ink, 'be-stop', cl(eY + sg * off));
   }
   for (const o of AC.orders) drawOrderLine(y, o.px, o.side > 0 ? C.up : C.down, [9, 4], `${o.side > 0 ? 'BUY' : 'SELL'} LIMIT ×${o.qty} · ${ptsTxt(o.px - M.p)} pts away`, lineDrag === 'ord:' + o.id, undefined, 'ord:' + o.id);
   if (D.trMap && st.ov.fills) {
@@ -2441,6 +2443,8 @@ function orderBtnDown(b) {
   } else if (b.k === 'add-target') {
     AC.tgtPx = sg > 0 ? Math.max(rt(AC.avg + 2 * dist), rt(M.p + 4 * TICK)) : Math.min(rt(AC.avg - 2 * dist), rt(M.p - 4 * TICK));
     $('#tgtPts').value = Math.abs(rt(AC.avg - AC.tgtPx)); lineDrag = 'target';
+  } else if (b.k === 'be-stop') {
+    AC.stopPx = rt(AC.avg); $('#stopPts').value = 0; toast('Stop moved to breakeven 🛡️');
   } else if (b.k === 'clear-stop') { AC.stopPx = null; $('#stopPts').value = ''; }
   else if (b.k === 'clear-target') { AC.tgtPx = null; $('#tgtPts').value = ''; }
   renderTrade(); req();
