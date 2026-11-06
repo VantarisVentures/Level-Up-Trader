@@ -2612,7 +2612,7 @@ cv.addEventListener('pointerdown', e => {
   }
   ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
   if (ptrs.size === 1) drag = { x: e.offsetX, y: e.offsetY, end: view.end, moved: false, type: e.pointerType, fix: view.fix ? { lo: view.fix.lo, hi: view.fix.hi } : null, axis: chartFree && !!mainYOf && e.offsetX > PW() && e.offsetY >= mainTop && e.offsetY <= mainTop + mainH };
-  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, sp: view.sp, mid: (a.x + b.x) / 2, idx: idxAt((a.x + b.x) / 2) }; drag = null; }
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, sp: view.sp, mid: (a.x + b.x) / 2, idx: idxAt((a.x + b.x) / 2), dx: Math.abs(a.x - b.x), dy: Math.abs(a.y - b.y), fix: chartFree && view.fix ? { lo: view.fix.lo, hi: view.fix.hi } : null, pm: chartFree && mainInv ? mainInv((a.y + b.y) / 2) : null }; drag = null; }
 });
 cv.addEventListener('pointermove', e => {
   if (drawDrag) { drawMove(e); return; }
@@ -2631,6 +2631,17 @@ cv.addEventListener('pointermove', e => {
   if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
   if (pinch && ptrs.size >= 2) {
     const [a, b] = [...ptrs.values()];
+    if (chartFree && pinch.fix) { // unlocked: fingers spread sideways = zoom time, up/down = stretch price, and moving them pans both
+      const dxn = Math.abs(a.x - b.x), dyn = Math.abs(a.y - b.y), d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const hx = pinch.dx >= 24, vy = pinch.dy >= 24, hf = hx ? dxn / pinch.dx : (vy ? 1 : d / pinch.d), vf = vy ? dyn / pinch.dy : 1;
+      view.sp = clamp(pinch.sp * hf, SPMIN, SPMAX);
+      view.end = pinch.idx + (PW() - mx) / view.sp - 0.5; clampView();
+      if (pinch.pm != null && mainH > 0) {
+        const span0 = pinch.fix.hi - pinch.fix.lo, span = Math.max(2, span0 / vf), hi = pinch.pm + (my - mainTop) / mainH * span;
+        view.fix = { lo: hi - span, hi };
+      }
+      req(); return;
+    }
     view.sp = clamp(pinch.sp * (Math.hypot(a.x - b.x, a.y - b.y) || 1) / pinch.d, SPMIN, SPMAX);
     view.end = pinch.idx + (PW() - pinch.mid) / view.sp - 0.5; clampView(); req(); return;
   }
