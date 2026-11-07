@@ -1320,18 +1320,26 @@ function renderTradeLog() { $('#tradelog').innerHTML = tradeLogHTML(); }
    ===================================================================== */
 // Each level is a market type with a profit target. Clear it, or lose half the target and try again.
 const SCEN = [
-  { name: 'Warm-up',       desc: 'A gentle trending day. Ride it.',                 day: { grindUp: .5, trendUp: .3, grindDown: .2 }, vol: 0.8, volu: 1 },
-  { name: 'Trend day',     desc: 'Strong one-way moves with pullbacks.',            day: { trendUp: .45, trendDown: .45, grindUp: .05, grindDown: .05 }, vol: 1, volu: 1 },
-  { name: 'Consolidation', desc: 'Tight ranges and fades. Breakouts often fail.',   day: { range: .7, chop: .3 }, vol: 0.85, volu: 0.9 },
-  { name: 'Reversal day',  desc: 'The morning trend flips by the afternoon.',       day: { reversal: .8, trendUp: .1, trendDown: .1 }, vol: 1, volu: 1 },
-  { name: 'Event day',     desc: 'A big data release hits soon after you go live.', day: null, vol: 1.1, volu: 1.2, evt: 'CPI' },
-  { name: 'High volume',   desc: 'Fast tape and big candles.',                      day: { trendUp: .25, trendDown: .25, reversal: .2, range: .1, chop: .2 }, vol: 1.5, volu: 2 },
-  { name: 'Low volume',    desc: 'Dead tape. Small moves and lots of chop.',        day: { chop: .5, range: .4, grindUp: .05, grindDown: .05 }, vol: 0.7, volu: 0.5 },
-  { name: 'FOMC day',      desc: 'Quiet build-up, then the Fed speaks.',            day: { range: .4, reversal: .3, trendUp: .15, trendDown: .15 }, vol: 1.1, volu: 1.3, evt: 'FOMC' },
-  { name: 'Wild card',     desc: 'Anything goes, and it moves fast.',               day: null, vol: 1.4, volu: 1.6, evt: 'NFP' },
-  { name: 'Gauntlet',      desc: 'Violent and unpredictable.',                      day: { trendUp: .2, trendDown: .2, reversal: .3, chop: .15, range: .15 }, vol: 1.7, volu: 2, evt: 'FOMC' }
+  { name: 'Warm-up',       desc: 'A gentle trending day. Ride it.',                 day: { grindUp: .5, trendUp: .3, grindDown: .2 }, vol: 0.8, volu: 1, go: [570, 630] },
+  { name: 'Trend day',     desc: 'Strong one-way moves with pullbacks.',            day: { trendUp: .45, trendDown: .45, grindUp: .05, grindDown: .05 }, vol: 1, volu: 1, go: [570, 660] },
+  { name: 'Consolidation', desc: 'Tight ranges and fades. Breakouts often fail.',   day: { range: .7, chop: .3 }, vol: 0.85, volu: 0.9, go: [630, 780] },
+  { name: 'Reversal day',  desc: 'The morning trend flips by the afternoon.',       day: { reversal: .8, trendUp: .1, trendDown: .1 }, vol: 1, volu: 1, go: [570, 630] },
+  { name: 'Event day',     desc: 'A big data release hits soon after you go live.', day: null, vol: 1.1, volu: 1.2, evt: 'CPI', go: [540, 750], evtIn: [10, 25] },
+  { name: 'High volume',   desc: 'Fast tape and big candles.',                      day: { trendUp: .25, trendDown: .25, reversal: .2, range: .1, chop: .2 }, vol: 1.5, volu: 2, go: [570, 900] },
+  { name: 'Low volume',    desc: 'Dead tape. Small moves and lots of chop.',        day: { chop: .5, range: .4, grindUp: .05, grindDown: .05 }, vol: 0.7, volu: 0.5, go: [690, 840] },
+  { name: 'FOMC day',      desc: 'Quiet build-up, then the Fed speaks.',            day: { range: .4, reversal: .3, trendUp: .15, trendDown: .15 }, vol: 1.1, volu: 1.3, evt: 'FOMC', go: [795, 825], evtAt: 840 },
+  { name: 'Wild card',     desc: 'Anything goes, and it moves fast.',               day: null, vol: 1.4, volu: 1.6, evt: 'NFP', go: [465, 495], evtAt: 510 },
+  { name: 'Gauntlet',      desc: 'Violent and unpredictable.',                      day: { trendUp: .2, trendDown: .2, reversal: .3, chop: .15, range: .15 }, vol: 1.7, volu: 2, evt: 'FOMC', go: [570, 660], evtIn: [45, 100] }
 ];
 const levelTarget = n => 500 * n;
+// Each level goes live at its own time of day (one minute before a quarter-hour), so not every level starts at the opening bell.
+function pickStart(scen, seedStr) {
+  if (!scen || !scen.go) return { mod: RTH0 - 1, evtMod: 600 };
+  const r = mulberry32(hashSeed(seedStr + '|start')), [lo, hi] = scen.go, slots = Math.round((hi - lo) / 15) + 1;
+  const mod = lo + 15 * Math.floor(r() * slots) - 1;
+  const evtMod = scen.evtAt != null ? scen.evtAt : scen.evtIn ? mod + 1 + scen.evtIn[0] + Math.floor(r() * (scen.evtIn[1] - scen.evtIn[0] + 1)) : mod + 1 + 30;
+  return { mod, evtMod };
+}
 function scenFor(n) {
   const base = SCEN[(n - 1) % SCEN.length], tier = Math.floor((n - 1) / SCEN.length);
   return Object.assign({}, base, { vol: base.vol * (1 + 0.12 * tier), tier, name: base.name + (tier ? ' ' + '★'.repeat(Math.min(3, tier)) : '') });
@@ -1999,11 +2007,12 @@ renderDrawUI();
 function regenerate() {
   const px = clamp(parseFloat($('#px').value) || 30900, 1000, 100000), lm = G.mode === 'levels';
   if (lm) { $('#seed').value = `L${LV.n}-${Math.random().toString(36).slice(2, 7)}`; LV.pnl = 0; LV.active = true; GM.locked = false; hideOver(); if (paused) togglePause(); }
-  const seedStr = $('#seed').value || 'seed', warm = +$('#hist').value, startOff = 929; // go live at 9:29 ET, one minute before the open
+  const seedStr = $('#seed').value || 'seed', warm = +$('#hist').value, go = lm ? pickStart(LV.scen, seedStr) : { mod: RTH0 - 1, evtMod: 600 }, startOff = (go.mod - ETH_START + 1440) % 1440; // free play goes live at 9:29 ET; each level picks its own time
   setDateFor(seedStr);
   M = new Market(seedStr, px, lm ? LV.scen : null);
   while (!(M.d === warm && M.off === startOff && M.sec === 0)) M.tick();
-  if (lm && LV.scen.evt) M.injectEvent(LV.scen.evt, 600, true); else M.injectEvent('FED', 600);
+  if (lm && LV.scen.evt) M.injectEvent(LV.scen.evt, go.evtMod % 1440, true); else M.injectEvent('FED', go.evtMod % 1440); // levels without a headline event still get a minor release shortly after going live
+  if (lm) toast(`🕐 Going live at ${hhmm((go.mod + 1) % 1440)} ET`);
   M.onEvent = onMarketEvent;
   resetAccount(); renderTrade(); renderTradeLog(); DR.list = []; DR.sel = null; drawDrag = null; renderDrawUI();
   D = null; syncSeries(); computeInd(); toLatest(); renderStats(); req();
