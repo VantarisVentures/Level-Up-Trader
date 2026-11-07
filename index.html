@@ -2265,14 +2265,14 @@ function draw() {
   drawTime(i0, i1);
 
   if (hover && hover.x < pw && hover.y < H - TH) {
-    const X = Math.round(xOf(hj)) + 0.5;
+    const X = Math.round(hover.x) + 0.5, XL = Math.round(xOf(hj)) + 0.5; // the line follows the cursor; the time label and readout stay on the candle under it
     ctx.strokeStyle = C.muted; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(X, 0); ctx.lineTo(X, H - TH);
     ctx.moveTo(0, Math.round(hover.y) + 0.5); ctx.lineTo(pw, Math.round(hover.y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
     const p = panes.find(q => hover.y >= q.t && hover.y < q.t + q.h);
     if (p && p.inv) tag(fmtAxis(p, p.inv(hover.y)), hover.y, C.ink, C.panel);
     const lab = st.tf >= 1440 ? dayLong(S[hj].d) : `${dayLong(S[hj].d)} ${hhmm(S[hj].mod)}`;
-    ctx.font = font(12, 600); const tw = ctx.measureText(lab).width + 12, tx = clamp(X - tw / 2, 0, pw - tw);
+    ctx.font = font(12, 600); const tw = ctx.measureText(lab).width + 12, tx = clamp(XL - tw / 2, 0, pw - tw);
     ctx.fillStyle = C.ink; ctx.fillRect(tx, H - TH + 1, tw, TH - 2);
     ctx.fillStyle = C.panel; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(lab, tx + 6, H - TH / 2);
   }
