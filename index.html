@@ -715,7 +715,8 @@ class Market {
     const def = DAY_DEF[type];
     const day = { type, macro: this.macro.state, volF: def.volF * Math.exp(0.2 * R.n()), str: R.range(...def.str), dir: def.dir, flipMod: 0,
       rthH: -Infinity, rthL: Infinity, rthC: NaN, onH: -Infinity, onL: Infinity, ethH: -Infinity, ethL: Infinity, rthV: 0 };
-    if (type === 'reversal') { day.dir = R.u() < 0.5 ? 1 : -1; day.flipMod = R.int(660, 840); }
+    if (type === 'reversal') { day.dir = R.u() < 0.5 ? 1 : -1; day.flipMod = R.int(...((this.scen && this.scen.flip) || [660, 840])); }
+    if (this.scen && this.scen.gap && !first) this.p += (R.u() < 0.5 ? 1 : -1) * R.range(0.0025, 0.005) * this.p; // gap-day levels: every session opens far from the last close
     this.days[this.d] = day;
     this.vw = { pv: 0, vv: 0, m: NaN }; this.lv = null; this.lvCool = {}; this.lvSide = {}; this.gf = null;
     if (type === 'crash' || type === 'squeeze') this.planCrash(type === 'crash' ? -1 : 1);
@@ -742,6 +743,11 @@ class Market {
     const t1 = ri(40, 100), t2 = t1 + ri(15, 45), t3 = t2 + ri(60, 200), t4 = t3 + ri(5, 25), t5 = t4 + ri(150, 450);
     this.cr = { dir, D, startOff, go: false, m0: 0, p0: 0, phase: '', bot: false, total: t5,
       nodes: [[0, 0], [t1, a], [t2, f2], [t3, 1], [t4, 1], [t5, 1 - rec]], names: ['leg1', 'bounce', 'leg2', 'base', 'recover'] };
+  }
+  forceBoss(kind) { // boss level: turn today into a scripted waterfall/squeeze that begins shortly after going live
+    const type = kind === 'squeeze' ? 'squeeze' : 'crash', def = DAY_DEF[type], day = this.days[this.d];
+    Object.assign(day, { type, dir: def.dir, volF: def.volF, str: this.R.range(...def.str) });
+    this.cr = null; this.planCrash(def.dir); this.cr.startOff = this.off + this.R.int(8, 30);
   }
   crStep(sigBase0) { // returns { code, rv, vf, fn } while a waterfall/squeeze is running, else null
     const cr = this.cr; if (!cr) return null;
@@ -864,17 +870,17 @@ class Market {
       if (a) { const k = a.kind === 'poke' ? 1 : 0.55 + 0.45 * Math.min(1, a.left / 8); return { f: a.dir * a.mag * k, rv: a.kind === 'bounce' || a.kind === 'break' ? 1 : 1.25, vf: a.kind === 'reject' || a.kind === 'poke' ? 1.7 : 1.15 }; }
     }
     if (this.minutes - this.lvGlobal < 10) return null;
-    const dd = clamp(this.dayDir(mod) * day.str, -1, 1), inRange = this.s.rg === 'range' || this.s.rg === 'chop';
+    const dd = clamp(this.dayDir(mod) * day.str, -1, 1), inRange = this.s.rg === 'range' || this.s.rg === 'chop', sc = this.scen || {};
     for (const [name, L, tp] of this.keyLevels(day)) {
       const d = p - L, vwap = name === 'VWAP', zone = sg * (vwap ? 1.6 : 2.6);
       if (Math.abs(d) > zone * 2) { this.lvSide[name] = Math.sign(d); continue; }
       const side = this.lvSide[name];
-      if (!side || Math.abs(d) >= zone || this.minutes - (this.lvCool[name] || -1e9) < (vwap ? 30 : 45)) continue;
+      if (!side || Math.abs(d) >= zone || this.minutes - (this.lvCool[name] || -1e9) < (vwap ? (sc.vw ? 18 : 30) : (sc.sweep ? 25 : 45))) continue;
       this.lvCool[name] = this.minutes; this.lvSide[name] = 0;
-      if (R.u() > (vwap ? 0.7 : 0.9)) continue; // not every touch matters
+      if (R.u() > (vwap ? (sc.vw ? 1 : 0.7) : (sc.sweep ? 1 : 0.9))) continue; // not every touch matters
       this.lvGlobal = this.minutes;
       const al = side * dd + (inRange ? 0.35 : 0); // holds are likelier when the level sits on the trend's side
-      const pB = vwap ? clamp(0.56 + 0.16 * al, 0.3, 0.8) : clamp(0.46 + 0.14 * al, 0.25, 0.7), pS = vwap ? 0 : 0.25, u = R.u();
+      const pB = vwap ? (sc.vw ? clamp(0.78 + 0.12 * al, 0.6, 0.92) : clamp(0.56 + 0.16 * al, 0.3, 0.8)) : (sc.sweep ? 0.3 : clamp(0.46 + 0.14 * al, 0.25, 0.7)), pS = vwap ? 0 : (sc.sweep ? 0.5 : 0.25), u = R.u();
       if (u < pB) { this.lv = { kind: 'bounce', dir: side, left: R.int(10, 22), mag: R.range(0.34, 0.6), name }; this.events.push({ i: this.nextIdx(), type: tp, dir: side }); }
       else if (u < pB + pS) { this.lv = { kind: 'poke', dir: -side, left: R.int(2, 5), mag: R.range(0.55, 0.9), name }; this.v = Math.max(this.v, 1.3); }
       else this.lv = { kind: 'break', dir: -side, left: R.int(8, 16), mag: R.range(0.25, 0.45), name };
@@ -889,11 +895,13 @@ class Market {
       if (prev && isFinite(prev.rthC)) {
         const gap = this.p - prev.rthC, gs = Math.abs(gap) / sg;
         if (gs >= 2 && R.u() < clamp(0.95 - 0.03 * gs, 0.55, 0.85)) { this.gf = { tgt: prev.rthC, dir: -Math.sign(gap), left: 200 }; this.events.push({ i: this.nextIdx(), type: 'GF', dir: this.gf.dir }); }
+        else if (gs >= 2 && this.scen && this.scen.gap && R.u() < 0.7) { this.gf = { go: true, tgt: this.p, dir: Math.sign(gap), left: 100 }; this.events.push({ i: this.nextIdx(), type: 'BO', dir: this.gf.dir }); } // gap and go
       }
       return 0;
     }
     if (!g) return 0;
-    if (--g.left <= 0 || (this.p - g.tgt) * g.dir >= 0 || !isRTH(mod)) { this.gf = null; return 0; }
+    if (--g.left <= 0 || (!g.go && (this.p - g.tgt) * g.dir >= 0) || !isRTH(mod)) { this.gf = null; return 0; }
+    if (g.go) return g.dir * 0.09;
     return g.dir * clamp(Math.abs(g.tgt - this.p) / (sg * 22), 0.04, 0.2);
   }
 
@@ -1320,18 +1328,26 @@ function renderTradeLog() { $('#tradelog').innerHTML = tradeLogHTML(); }
    ===================================================================== */
 // Each level is a market type with a profit target. Clear it, or lose half the target and try again.
 const SCEN = [
-  { name: 'Warm-up',       desc: 'A gentle trending day. Ride it.',                 day: { grindUp: .5, trendUp: .3, grindDown: .2 }, vol: 0.8, volu: 1, go: [570, 630] },
-  { name: 'Trend day',     desc: 'Strong one-way moves with pullbacks.',            day: { trendUp: .45, trendDown: .45, grindUp: .05, grindDown: .05 }, vol: 1, volu: 1, go: [570, 660] },
-  { name: 'Consolidation', desc: 'Tight ranges and fades. Breakouts often fail.',   day: { range: .7, chop: .3 }, vol: 0.85, volu: 0.9, go: [630, 780] },
-  { name: 'Reversal day',  desc: 'The morning trend flips by the afternoon.',       day: { reversal: .8, trendUp: .1, trendDown: .1 }, vol: 1, volu: 1, go: [570, 630] },
-  { name: 'Event day',     desc: 'A big data release hits soon after you go live.', day: null, vol: 1.1, volu: 1.2, evt: 'CPI', go: [540, 750], evtIn: [10, 25] },
-  { name: 'High volume',   desc: 'Fast tape and big candles.',                      day: { trendUp: .25, trendDown: .25, reversal: .2, range: .1, chop: .2 }, vol: 1.5, volu: 2, go: [570, 900] },
-  { name: 'Low volume',    desc: 'Dead tape. Small moves and lots of chop.',        day: { chop: .5, range: .4, grindUp: .05, grindDown: .05 }, vol: 0.7, volu: 0.5, go: [690, 840] },
-  { name: 'FOMC day',      desc: 'Quiet build-up, then the Fed speaks.',            day: { range: .4, reversal: .3, trendUp: .15, trendDown: .15 }, vol: 1.1, volu: 1.3, evt: 'FOMC', go: [795, 825], evtAt: 840 },
-  { name: 'Wild card',     desc: 'Anything goes, and it moves fast.',               day: null, vol: 1.4, volu: 1.6, evt: 'NFP', go: [465, 495], evtAt: 510 },
-  { name: 'Gauntlet',      desc: 'Violent and unpredictable.',                      day: { trendUp: .2, trendDown: .2, reversal: .3, chop: .15, range: .15 }, vol: 1.7, volu: 2, evt: 'FOMC', go: [570, 660], evtIn: [45, 100] }
+  { name: 'Warm-up',       desc: 'A gentle trending day. Ride it.',                 day: { grindUp: .5, trendUp: .3, grindDown: .2 }, vol: 0.8, volu: 1, go: [570, 630], lesson: 'Trends pay. Buy pullbacks in an uptrend instead of chasing the highs.' },
+  { name: 'Trend day',     desc: 'Strong one-way moves with pullbacks.',            day: { trendUp: .45, trendDown: .45, grindUp: .05, grindDown: .05 }, vol: 1, volu: 1, go: [570, 660], lesson: 'On a trend day the pullbacks are your entries. Do not fade the trend.' },
+  { name: 'Consolidation', desc: 'Tight ranges and fades. Breakouts often fail.',   day: { range: .7, chop: .3 }, vol: 0.85, volu: 0.9, go: [630, 780], lesson: 'In a range, fade the edges and take profit near the middle. Do not chase breakouts.' },
+  { name: 'Reversal day',  desc: 'The morning trend flips by the afternoon.',       day: { reversal: .8, trendUp: .1, trendDown: .1 }, vol: 1, volu: 1, go: [570, 630], lesson: 'A trend can flip. When it breaks its own pullback lows or highs, respect the turn.' },
+  { name: 'Event day',     desc: 'A big data release hits soon after you go live.', day: null, vol: 1.1, volu: 1.2, evt: 'CPI', go: [540, 750], evtIn: [10, 25], lesson: 'Do not trade the first spike. Let the news settle, then follow the move that holds.' },
+  { name: 'Gap day',       desc: 'The market opens far from yesterday\'s close.',   day: { trendUp: .25, trendDown: .25, range: .25, reversal: .15, chop: .1 }, vol: 1, volu: 1.1, go: [570, 570], gap: true, lesson: 'Small gaps tend to fill, big gaps can run. Wait to see which one it is before fading.' },
+  { name: 'High volume',   desc: 'Fast tape and big candles.',                      day: { trendUp: .25, trendDown: .25, reversal: .2, range: .1, chop: .2 }, vol: 1.5, volu: 2, go: [570, 900], lesson: 'Fast tape: trade smaller size and give your stops more room.' },
+  { name: 'Low volume',    desc: 'Dead tape. Small moves and lots of chop.',        day: { chop: .5, range: .4, grindUp: .05, grindDown: .05 }, vol: 0.7, volu: 0.5, go: [690, 840], lesson: 'Dead tape: breakouts fail and targets are small. Take quick profits or sit out.' },
+  { name: 'Stop-hunt day', desc: 'Price loves to poke through obvious levels.',     day: { range: .4, trendUp: .2, trendDown: .2, chop: .2 }, vol: 1, volu: 1.1, go: [570, 660], sweep: true, lesson: 'Price sweeps PDH, PDL and overnight levels to grab stops. Wait for the snap back, then trade it.' },
+  { name: 'FOMC day',      desc: 'Quiet build-up, then the Fed speaks.',            day: { range: .4, reversal: .3, trendUp: .15, trendDown: .15 }, vol: 1.1, volu: 1.3, evt: 'FOMC', go: [795, 825], evtAt: 840, lesson: 'Quiet before the Fed, then a fake move, then the real one. Stay flat until it settles.' },
+  { name: 'VWAP trend day', desc: 'A steady trend that keeps respecting VWAP.',     day: { trendUp: .3, trendDown: .3, grindUp: .2, grindDown: .2 }, vol: 0.95, volu: 1, go: [600, 720], vw: true, lesson: 'In a trend, VWAP acts like support or resistance. Buy the touch with the trend.' },
+  { name: 'Opening range', desc: 'The first 15 minutes sets the day\'s box.',       day: { trendUp: .3, trendDown: .3, range: .2, reversal: .2 }, vol: 1.1, volu: 1.2, go: [570, 570], lesson: 'The first 15 minutes sets the range. Trade the break, and watch for the fake.' },
+  { name: 'Afternoon fade', desc: 'The morning move runs out of steam.',            day: { reversal: 1 }, vol: 1, volu: 1, go: [780, 810], flip: [830, 880], lesson: 'Late-day trends run out of steam. Fade the exhaustion, not the middle of the move.' },
+  { name: 'Wild card',     desc: 'Anything goes, and it moves fast.',               day: null, vol: 1.4, volu: 1.6, evt: 'NFP', go: [465, 495], evtAt: 510, lesson: 'Anything goes. Size down and protect your account first.' },
+  { name: 'Power hour',    desc: 'Speed picks up into the close.',                  day: { trendUp: .3, trendDown: .3, reversal: .2, range: .2 }, vol: 1.25, volu: 1.5, go: [840, 870], lesson: 'Moves speed up into the close. Take your profit, do not hold on hoping.' },
+  { name: 'Gauntlet',      desc: 'Violent and unpredictable.',                      day: { trendUp: .2, trendDown: .2, reversal: .3, chop: .15, range: .15 }, vol: 1.7, volu: 2, evt: 'FOMC', go: [570, 660], evtIn: [45, 100], lesson: 'Violent and mixed. Survive first, profit second.' }
 ];
-const levelTarget = n => 500 * n;
+// Every 10th level is a boss: a scripted waterfall or squeeze that starts soon after you go live.
+const BOSS = { name: 'Boss level', desc: 'A huge move is coming. Survive it, then trade the recovery.', day: null, vol: 1.3, volu: 2, go: [570, 660], boss: true, lesson: 'Big moves come in waves: the move, a pause, another leg, then a reversal. Do not fight the first leg.' };
+const levelTarget = n => Math.round(500 * n * (n % 10 === 0 ? 1.5 : 1));
 // Each level goes live at its own time of day (one minute before a quarter-hour), so not every level starts at the opening bell.
 function pickStart(scen, seedStr) {
   if (!scen || !scen.go) return { mod: RTH0 - 1, evtMod: 600 };
@@ -1341,7 +1357,7 @@ function pickStart(scen, seedStr) {
   return { mod, evtMod };
 }
 function scenFor(n) {
-  const base = SCEN[(n - 1) % SCEN.length], tier = Math.floor((n - 1) / SCEN.length);
+  const base = n % 10 === 0 ? BOSS : SCEN[(n - 1) % SCEN.length], tier = Math.floor((n - 1) / SCEN.length);
   return Object.assign({}, base, { vol: base.vol * (1 + 0.12 * tier), tier, name: base.name + (tier ? ' ' + '★'.repeat(Math.min(3, tier)) : '') });
 }
 const POWERS = {
@@ -1546,27 +1562,29 @@ function startLevel(n, intro) {
 }
 function finishLevel(pass) {
   LV.active = false; GM.locked = true; AC.orders = []; if (!paused) togglePause();
-  if (pass) { if (G.lastFail === LV.n) unlock('comeback'); G.lastFail = 0; G.cleared++; G.lvl = LV.n + 1; G.maxLvl = Math.max(G.maxLvl, G.lvl); LV.reward = award('Level cleared', true); LV.coins = 50 + 25 * LV.n; G.coins += LV.coins; confetti(140); }
+  if (pass) { if (G.lastFail === LV.n) unlock('comeback'); G.lastFail = 0; G.cleared++; G.lvl = LV.n + 1; G.maxLvl = Math.max(G.maxLvl, G.lvl); LV.reward = award('Level cleared', true); LV.coins = (50 + 25 * LV.n) * (LV.scen.boss ? 3 : 1); G.coins += LV.coins; if (LV.scen.boss) { LV.reward2 = award('Boss cleared', true); } confetti(140); }
   else { G.fails++; G.lastFail = LV.n; shake(); }
   checkBadges(); saveG(); renderGame(); showOver(pass ? 'pass' : 'fail');
 }
+const dayWord = () => LV.scen.boss ? `That was the <b>boss ${LV.bossKind === 'squeeze' ? 'squeeze' : 'waterfall'}</b>.` : `That was a <b>${LV.scen.name.toLowerCase()}</b> market.`;
 function showOver(kind) {
   const o = document.getElementById('lvover'), n2 = LV.n + 1, s2 = scenFor(n2);
   const rule = (n, sc) => `Target <b>${money(levelTarget(n))}</b> · fail at <b>-${money(levelTarget(n) / 2)}</b>`;
   let h;
   if (kind === 'intro') {
-    h = `<div class="lo-card"><div class="lo-big">Level ${LV.n}</div><div class="lo-sub">Figure out what kind of day this is, then trade it.</div>
+    h = `<div class="lo-card"><div class="lo-big">${LV.scen.boss ? '👑 Boss level ' : 'Level '}${LV.n}</div><div class="lo-sub">${LV.scen.boss ? 'Something big is coming. Survive it, then trade the recovery.' : 'Figure out what kind of day this is, then trade it.'}</div>
       <div class="lo-next">${rule(LV.n)}<br>Make the target before you lose half of it.<br><span class="lo-sub">Tip: EQ pays $20 a point, MEQ $2 a point. Change the contract below the chart.</span></div>
       <div class="lo-btns"><button id="loGo" class="primary lo-btn" type="button">Go</button></div></div>`;
   } else if (kind === 'pass') {
     h = `<div class="lo-card"><div class="lo-big">🏆 Level ${LV.n} cleared!</div><div class="lo-sub">${money(LV.pnl)} profit on a ${money(LV.target)} target</div>
-      <div class="lo-sub">That was a <b>${LV.scen.name.toLowerCase()}</b> market.</div>
+      <div class="lo-sub">${dayWord()}</div>
+      <div class="lo-sub">📘 ${LV.scen.lesson}</div>
       <div class="lo-next">Next: <b>Level ${n2}</b><br>${rule(n2)}</div>
-      <div class="lo-sub">🎁 Reward: 🪙 ${LV.coins} and ${POWERS[LV.reward].e} ${POWERS[LV.reward].name}</div>
+      <div class="lo-sub">🎁 Reward: 🪙 ${LV.coins} and ${POWERS[LV.reward].e} ${POWERS[LV.reward].name}${LV.scen.boss && LV.reward2 ? ` + ${POWERS[LV.reward2].e} ${POWERS[LV.reward2].name}` : ''}</div>
       <div class="lo-btns"><button id="loGo" class="primary lo-btn" type="button">Start level ${n2}</button></div></div>`;
   } else {
     const sc = G.lastLoss && G.inv.chance > 0;
-    h = `<div class="lo-card fail"><div class="lo-big">💥 Level ${LV.n} failed</div><div class="lo-sub">You went down ${money(-LV.pnl)}. Lose half the target and the level ends.<br>That was a <b>${LV.scen.name.toLowerCase()}</b> market.</div>
+    h = `<div class="lo-card fail"><div class="lo-big">💥 Level ${LV.n} failed</div><div class="lo-sub">You went down ${money(-LV.pnl)}. Lose half the target and the level ends.<br>${dayWord()}<br>📘 ${LV.scen.lesson}</div>
       <div class="lo-next">Try again on a fresh market.<br>${rule(LV.n)}</div>
       <div class="lo-btns"><button id="loGo" class="primary lo-btn" type="button">Try again</button>${sc ? `<button id="loChance" class="minibtn lo-btn" type="button">⏪ Use Second Chance (${G.inv.chance})</button>` : ''}</div></div>`;
   }
@@ -1778,7 +1796,7 @@ function renderQuestPanel() {
   let h = `<h4>${lm ? 'Level ' + LV.n : 'Free play'}</h4>`;
   if (lm) {
     h += `<div class="foot" style="margin:0 0 6px">Target ${money(LV.target)} · fail at -${money(LV.limit)}<br>What kind of day it is stays hidden. Read the tape, or use a 🔮 Crystal Ball.</div>`;
-    h += [1, 2, 3].map(k => { const n = LV.n + k, sc = scenFor(n); return `<div class="pwrow"><b>Lv ${n}</b><div>target ${money(levelTarget(n))} <span>fail at -${money(levelTarget(n) / 2)}</span></div></div>`; }).join('');
+    h += [1, 2, 3].map(k => { const n = LV.n + k, sc = scenFor(n); return `<div class="pwrow"><b>${n % 10 === 0 ? '👑' : 'Lv'} ${n}</b><div>target ${money(levelTarget(n))} <span>fail at -${money(levelTarget(n) / 2)}</span></div></div>`; }).join('');
   } else h += `<div class="foot" style="margin:0 0 6px">Practice with any market. No targets and no limits.</div>`;
   h += `<h4>Daily quests</h4>` + G.q.items.map(it => {
     const need = QPOOL[it.id].unit ? it.goal * qUnit() : it.goal, pct = clamp(it.p / need, 0, 1) * 100;
@@ -2013,6 +2031,7 @@ function regenerate() {
   while (!(M.d === warm && M.off === startOff && M.sec === 0)) M.tick();
   if (lm && LV.scen.evt) M.injectEvent(LV.scen.evt, go.evtMod % 1440, true); else M.injectEvent('FED', go.evtMod % 1440); // levels without a headline event still get a minor release shortly after going live
   if (lm) toast(`🕐 Going live at ${hhmm((go.mod + 1) % 1440)} ET`);
+  if (lm && LV.scen.boss) { LV.bossKind = mulberry32(hashSeed(seedStr + '|boss'))() < 0.6 ? 'crash' : 'squeeze'; M.forceBoss(LV.bossKind); }
   M.onEvent = onMarketEvent;
   resetAccount(); renderTrade(); renderTradeLog(); DR.list = []; DR.sel = null; drawDrag = null; renderDrawUI();
   D = null; syncSeries(); computeInd(); toLatest(); renderStats(); req();
