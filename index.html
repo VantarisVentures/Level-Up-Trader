@@ -191,7 +191,9 @@ html,body{overflow-x:hidden;overflow-y:auto}
 .menubtn{height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:5px}
 .menubtn::after{content:"";width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor;opacity:.6;margin-top:1px}
 .menubtn[aria-expanded="true"]{border-color:var(--ink)}
-.menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28);padding:10px 12px;max-height:min(72vh,520px);overflow-y:auto;width:max-content;max-width:min(92vw,380px)}
+.menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28);padding:0 12px 10px;max-height:min(72vh,520px);overflow-y:auto;overscroll-behavior:contain;width:max-content;max-width:min(92vw,380px)}
+.menupanel::before{content:"Done  ✕";position:sticky;top:0;z-index:3;display:block;margin:0 -12px 8px;padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--line);border-radius:10px 10px 0 0;text-align:right;font-weight:700;font-size:13px;color:var(--muted);cursor:pointer}
+.menupanel.sheet,.menupanel.right.sheet{position:fixed;left:8px;right:8px;top:auto;bottom:8px;width:auto;max-width:none;max-height:42vh;transform:none}
 .menupanel.right{left:auto;right:0}
 #modebtn::after{display:none}
 #otype .sm{display:none}
@@ -223,7 +225,7 @@ html,body{overflow-x:hidden;overflow-y:auto}
 @media (max-width:700px){
   .pnlbox{align-items:flex-start}
   .brand{display:none}
-  .menupanel,.menupanel.right{position:fixed;left:8px;right:8px;top:auto;bottom:8px;width:auto;max-width:none;max-height:70vh}
+  .menupanel,.menupanel.right{position:fixed;left:8px;right:8px;top:auto;bottom:8px;width:auto;max-width:none;max-height:42vh;transform:none}
 }
 
 /* ---- game layer ---- */
@@ -1968,20 +1970,28 @@ function applySettings() {
 let openMenu = null;
 /* open down and to the right when there is room, otherwise flip, and never leave the window */
 function placePanel(panel) {
-  panel.style.left = panel.style.right = panel.style.transform = '';
+  panel.style.left = panel.style.right = panel.style.transform = panel.style.maxHeight = ''; panel.classList.remove('sheet');
   if (getComputedStyle(panel).position !== 'absolute') return;
+  const fitV = () => { // keep the menu above the Buy/Sell bar; very short windows get a bottom sheet instead
+    const ab = document.querySelector('.actionbar'), limit = (ab ? ab.getBoundingClientRect().top : innerHeight) - 6, r2 = panel.getBoundingClientRect();
+    if (r2.bottom <= limit) return;
+    const avail = limit - r2.top;
+    if (avail >= 220) panel.style.maxHeight = avail + 'px'; else { panel.style.left = panel.style.right = ''; panel.classList.add('sheet'); }
+  };
   panel.style.left = '0'; panel.style.right = 'auto';
   let r = panel.getBoundingClientRect();
   if (r.right > innerWidth - 8) { panel.style.left = 'auto'; panel.style.right = '0'; r = panel.getBoundingClientRect(); }
   if (r.left < 8) panel.style.transform = `translateX(${8 - r.left}px)`;
+  fitV();
 }
-function bindMenu(btnId, panelId, onOpen) {
+function bindMenu(btnId, panelId, onOpen, peek) {
   const btn = $(btnId), panel = $(panelId);
   function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (openMenu && openMenu.panel === panel) openMenu = null; }
   function open() {
     if (openMenu) openMenu.close();
     panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); openMenu = { panel, close };
     if (onOpen) onOpen();
+    if (peek && innerWidth <= 700) { const cw = document.querySelector('.chartWrap'); if (cw) cw.scrollIntoView({ block: 'start' }); } // phone: the sheet sits at the bottom, so show the chart above it
     placePanel(panel);
   }
   btn.addEventListener('click', e => { e.stopPropagation(); panel.hidden ? open() : close(); });
@@ -1990,8 +2000,8 @@ function bindMenu(btnId, panelId, onOpen) {
 }
 bindMenu('#mktbtn', '#mktpanel');
 bindMenu('#logbtn', '#logpanel', renderTradeLog);
-bindMenu('#indbtn', '#indpanel');
-bindMenu('#akbtn', '#akpanel');
+bindMenu('#indbtn', '#indpanel', null, true);
+bindMenu('#akbtn', '#akpanel', null, true);
 bindMenu('#trbtn', '#trpanel', renderTrophies);
 bindMenu('#statsbtn', '#statspanel', renderStats);
 $('#modebtn').addEventListener('click', () => {
@@ -2004,7 +2014,9 @@ document.getElementById('shoppanel').addEventListener('click', shopClick);
 $('#warppanel').addEventListener('click', e => { e.stopPropagation(); warpClick(e); });
 bindMenu('#evbtn', '#evpanel', renderEvPanel);
 bindMenu('#qbtn', '#qpanel', renderQuestPanel);
-bindMenu('#drawbtn', '#drawpanel');
+bindMenu('#drawbtn', '#drawpanel', null, true);
+// the sticky 'Done ✕' bar at the top of every menu closes it
+document.addEventListener('click', e => { const p = e.target; if (openMenu && p.classList && p.classList.contains('menupanel') && e.clientY - p.getBoundingClientRect().top < 40) { e.stopPropagation(); openMenu.close(); } }, true);
 document.addEventListener('click', () => { if (openMenu) { openMenu.close(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && openMenu) openMenu.close(); });
 
