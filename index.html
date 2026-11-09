@@ -1643,7 +1643,7 @@ function openWarp() {
   const panel = $('#warppanel');
   if (!panel.hidden) { openMenu && openMenu.close(); return; }
   if (openMenu) openMenu.close();
-  renderWarp(); panel.hidden = false;
+  renderWarp(); dock(panel); panel.hidden = false;
   openMenu = { panel, close: () => { panel.hidden = true; if (openMenu && openMenu.panel === panel) openMenu = null; } };
 }
 function warpClick(e) {
@@ -1968,6 +1968,11 @@ function applySettings() {
 
 /* ---------- dropdown menus (Market / Log / Indicators / Answer key / Stats) ---------- */
 let openMenu = null;
+/* phone: menus live directly on <body> while open, so the scrolling control strip (iOS Safari clips fixed children inside it) can never hide them */
+function dock(panel) {
+  if (innerWidth > 700) { if (panel._home) { panel._home.parent.insertBefore(panel, panel._home.next); panel._home = null; } return; }
+  if (panel.parentNode !== document.body) { panel._home = { parent: panel.parentNode, next: panel.nextSibling }; document.body.appendChild(panel); }
+}
 /* open down and to the right when there is room, otherwise flip, and never leave the window */
 function placePanel(panel) {
   panel.style.left = panel.style.right = panel.style.transform = panel.style.maxHeight = ''; panel.classList.remove('sheet');
@@ -1989,7 +1994,7 @@ function bindMenu(btnId, panelId, onOpen, peek) {
   function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (openMenu && openMenu.panel === panel) openMenu = null; }
   function open() {
     if (openMenu) openMenu.close();
-    panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); openMenu = { panel, close };
+    dock(panel); panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); openMenu = { panel, close };
     if (onOpen) onOpen();
     if (peek && innerWidth <= 700) { const cw = document.querySelector('.chartWrap'); if (cw) cw.scrollIntoView({ block: 'start' }); } // phone: the sheet sits at the bottom, so show the chart above it
     placePanel(panel);
